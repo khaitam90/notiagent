@@ -37,6 +37,11 @@ CRAZY_MVP_MODEL = "aigc-video-kling-2.5-turbo"
 OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations"
 OPENAI_IMAGE_MODEL = "gpt-image-1"
 MOCK_IMAGE_FILENAME = "mock-placeholder.png"
+
+TOGETHER_CHAT_URL = "https://api.together.xyz/v1/chat/completions"
+TOGETHER_IMAGE_URL = "https://api.together.xyz/v1/images/generations"
+TOGETHER_DEFAULT_CHAT_MODEL = "meta-llama/Llama-3.3-70B-Instruct-Turbo"
+TOGETHER_DEFAULT_IMAGE_MODEL = "black-forest-labs/FLUX.2-dev"  # ~$0.0154/MP - da xac minh qua docs Together.ai, khong phai free
 MOCK_AUDIO_FILENAME = "mock-placeholder.wav"
 
 # provider="mock" — không gọi provider trả phí nào; dùng để kiểm chứng luồng UI
@@ -157,6 +162,37 @@ class ImageCreate(BaseModel):
     model: str = OPENAI_IMAGE_MODEL
     width: int = Field(default=1024, ge=256, le=2048)
     height: int = Field(default=1024, ge=256, le=2048)
+    num_images: int = Field(default=1, ge=1, le=4)
+    # image_url/image_urls (anh tham chieu de chinh sua/giu nhan vat) va face_id: frontend co gui
+    # nhung provider hien co (mock/together/openai text-to-image) CHUA ho tro anh tham chieu that -
+    # nhan roi bao loi ro rang thay vi lang le bo qua, xem create_image().
+    image_url: str | None = None
+    image_urls: list[str] | None = None
+    generation_mode: str = "standard"
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatDirectRequest(BaseModel):
+    messages: list[ChatMessage]
+    provider: str = "together"
+    model: str | None = None
+
+
+class UnifiedChatRequest(BaseModel):
+    message: str = ""
+    chat_id: str = ""
+    messages: list[ChatMessage] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
+    skill: str = "general"
+    connections: list[str] = Field(default_factory=list)
+    enabled_skills: list[str] = Field(default_factory=list)
+    force_agent: bool = False
+    auto_model: bool = False
 
 
 class WorkflowRunCreate(BaseModel):
@@ -760,14 +796,28 @@ def download(url: str, filename: str = "notiagent-download") -> Any:
 def providers() -> dict[str, Any]:
     atlas_configured = bool(os.getenv("ATLASCLOUD_API_KEY", "").strip())
     crazy_configured = bool(os.getenv("CRAZYROUTER_API_KEY", "").strip())
+    together_configured = bool(os.getenv("TOGETHER_API_KEY", "").strip())
     return {
         "providers": [
             {"id": "atlascloud", "configured": atlas_configured},
             {"id": "crazyrouter", "configured": crazy_configured},
             {"id": "openai", "configured": bool(os.getenv("OPENAI_API_KEY"))},
             {"id": "replicate", "configured": bool(os.getenv("REPLICATE_API_TOKEN"))},
+            {"id": "together", "configured": together_configured},
         ],
         "paidGenerationEnabled": atlas_configured or crazy_configured,
+        # ChatWorkspace.tsx doc providers.chat.configured de biet model nao bam duoc (isModelAvailable
+        # trong lib/models.ts) - openrouter/novita/gemini chua co key that nao o may nay nen bao false
+        # ro rang, thay vi de trong (truoc day khong co key "chat" nen moi model hien "bam duoc" du
+        # khong that su goi noi).
+        "chat": {
+            "configured": {
+                "together": together_configured,
+                "openrouter": False,
+                "novita": False,
+                "gemini": False,
+            }
+        },
     }
 
 
@@ -989,9 +1039,62 @@ def openai_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
+def together_headers() -> dict[str, str]:
+    token = os.getenv("TOGETHER_API_KEY", "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="Chưa cấu hình TOGETHER_API_KEY trong .env")
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def save_b64_image(b64_data: str) -> str:
+    import base64
+    filename = f"{secrets.token_hex(12)}.png"
+    (UPLOAD_DIR / filename).write_bytes(base64.b64decode(b64_data))
+    return media_url(filename)
+
+
+def extract_image_urls(items: list[dict[str, Any]]) -> list[str]:
+    urls: list[str] = []
+    for item in items:
+        b64 = item.get("b64_json")
+        if b64:
+            urls.append(save_b64_image(b64))
+        elif item.get("url"):
+            urls.append(str(item["url"]))
+    return urls
+
+
 def create_image(body: ImageCreate) -> dict[str, Any]:
+    if body.image_url or body.image_urls:
+        raise HTTPException(status_code=400, detail="Ảnh tham chiếu (chỉnh sửa/giữ nhân vật) chưa được hỗ trợ ở backend rút gọn này — chỉ tạo ảnh mới từ prompt.")
+    if body.generation_mode == "face_id":
+        raise HTTPException(status_code=400, detail="FaceID chưa được hỗ trợ ở backend rút gọn này.")
+
     if body.provider == "mock":
-        return {"ok": True, "url": ensure_mock_image(), "provider": "mock"}
+        url = ensure_mock_image()
+        urls = [url] * body.num_images
+        return {"ok": True, "url": url, "imageUrl": url, "imageUrls": urls, "provider": "mock"}
+
+    if body.provider == "together":
+        payload = {
+            "model": body.model if body.model and body.model != OPENAI_IMAGE_MODEL else TOGETHER_DEFAULT_IMAGE_MODEL,
+            "prompt": body.prompt.strip(),
+            "width": body.width,
+            "height": body.height,
+            "steps": 4,
+            "n": body.num_images,
+        }
+        try:
+            response = post_with_retry(TOGETHER_IMAGE_URL, headers=together_headers(), json_body=payload, timeout=60)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise HTTPException(status_code=502, detail=provider_error_detail("Together.ai từ chối yêu cầu", error)) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=502, detail=f"Không kết nối được Together.ai: {error}") from error
+        urls = extract_image_urls(response.json().get("data") or [])
+        if not urls:
+            raise HTTPException(status_code=502, detail="Together.ai không trả về ảnh hợp lệ")
+        return {"ok": True, "url": urls[0], "imageUrl": urls[0], "imageUrls": urls, "provider": "together"}
 
     if body.provider != "openai":
         raise HTTPException(status_code=400, detail=f"Provider ảnh '{body.provider}' chưa được hỗ trợ")
@@ -1000,7 +1103,7 @@ def create_image(body: ImageCreate) -> dict[str, Any]:
         "model": body.model or OPENAI_IMAGE_MODEL,
         "prompt": body.prompt.strip(),
         "size": f"{body.width}x{body.height}",
-        "n": 1,
+        "n": body.num_images,
     }
     try:
         response = post_with_retry(OPENAI_IMAGE_URL, headers=openai_headers(), json_body=payload, timeout=60)
@@ -1010,25 +1113,77 @@ def create_image(body: ImageCreate) -> dict[str, Any]:
     except httpx.HTTPError as error:
         raise HTTPException(status_code=502, detail=f"Không kết nối được OpenAI: {error}") from error
 
-    data = response.json()
-    items = data.get("data") or []
-    if not items:
-        raise HTTPException(status_code=502, detail="OpenAI không trả về ảnh")
-    item = items[0]
-    b64 = item.get("b64_json")
-    if b64:
-        import base64
-        filename = f"{secrets.token_hex(12)}.png"
-        (UPLOAD_DIR / filename).write_bytes(base64.b64decode(b64))
-        return {"ok": True, "url": media_url(filename), "provider": "openai"}
-    if item.get("url"):
-        return {"ok": True, "url": item["url"], "provider": "openai"}
-    raise HTTPException(status_code=502, detail="OpenAI không trả về ảnh hợp lệ")
+    urls = extract_image_urls(response.json().get("data") or [])
+    if not urls:
+        raise HTTPException(status_code=502, detail="OpenAI không trả về ảnh hợp lệ")
+    return {"ok": True, "url": urls[0], "imageUrl": urls[0], "imageUrls": urls, "provider": "openai"}
 
 
 @app.post("/api/image", status_code=201)
 def create_image_endpoint(body: ImageCreate) -> dict[str, Any]:
     return create_image(body)
+
+
+def together_chat_completion(messages: list[dict[str, str]], model: str | None = None) -> str:
+    payload = {
+        "model": model or TOGETHER_DEFAULT_CHAT_MODEL,
+        "messages": messages,
+        "max_tokens": 2048,
+    }
+    try:
+        response = post_with_retry(TOGETHER_CHAT_URL, headers=together_headers(), json_body=payload, timeout=90)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(status_code=502, detail=provider_error_detail("Together.ai từ chối yêu cầu", error)) from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"Không kết nối được Together.ai: {error}") from error
+    data = response.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise HTTPException(status_code=502, detail="Together.ai không trả về nội dung")
+    content = choices[0].get("message", {}).get("content")
+    if not content:
+        raise HTTPException(status_code=502, detail="Together.ai trả về nội dung rỗng")
+    return str(content)
+
+
+@app.post("/api/chat")
+def chat_direct(body: ChatDirectRequest) -> dict[str, Any]:
+    # provider trong body chi la nhan hien thi cua frontend (novita/openrouter/gemini...) - backend
+    # rut gon nay CHI co Together.ai that su noi day, nen luon dung Together bat ke gia tri provider
+    # gui len, thay vi bao loi "chua ho tro" cho moi request (Together la provider duy nhat duoc cau
+    # hinh o may nay - xem HANDOFF-CLAUDE-CODE.md).
+    messages = [{"role": m.role, "content": m.content} for m in body.messages]
+    content = together_chat_completion(messages, body.model)
+    return {"content": content, "provider": "together", "model": body.model or TOGETHER_DEFAULT_CHAT_MODEL}
+
+
+@app.post("/api/chat/unified")
+def chat_unified(body: UnifiedChatRequest) -> dict[str, Any]:
+    history = [{"role": m.role, "content": m.content} for m in body.messages]
+    history.append({"role": "user", "content": body.message})
+    model = body.model or TOGETHER_DEFAULT_CHAT_MODEL
+    reply = together_chat_completion(history, model)
+    if body.force_agent:
+        # Chua noi tool that nao (n8n/browser/search) - VPS cu lam nhung viec nay da het han, chua
+        # xay lai. Van tra loi that qua LLM nhung gan co "fallback" dung dinh dang UI da thiet ke
+        # san cho truong hop nay (xem ChatWorkspace.tsx: fallback=true -> hien "Agent fallback...").
+        return {
+            "reply": reply,
+            "mode": "agent",
+            "tools": False,
+            "fallback": True,
+            "provider": "together",
+            "model": model,
+            "resolved_label": "Together.ai (chưa nối công cụ tự động)",
+        }
+    return {
+        "reply": reply,
+        "mode": "chat",
+        "tools": False,
+        "provider": "together",
+        "model": model,
+    }
 
 
 @app.get("/api/video/models")

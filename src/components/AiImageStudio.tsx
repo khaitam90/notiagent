@@ -43,6 +43,7 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [variants, setVariants] = useState<ImageVariantCount>(1)
   const [error, setError] = useState<string | null>(null)
+  const [pendingText, setPendingText] = useState<string | null>(null)
   const [activePreset, setActivePreset] = useState<ImageToolPreset | null>(null)
   const [refImage, setRefImage] = useState<string | null>(null)
   const [refImageFile, setRefImageFile] = useState<File | null>(null)
@@ -187,6 +188,14 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
       setError('Ảnh ref đang upload — đợi vài giây rồi bấm Tạo lại')
       return
     }
+    // provider that (khong phai mock) deu tinh phi that - luon hoi xac nhan truoc, giong dung
+    // co che da lam voi tao video (AiVideoStudio.tsx). Khong tu goi thang provider tra phi.
+    setError(null)
+    setPendingText(text)
+  }
+
+  const runGenerate = async (text: string, mock: boolean) => {
+    setPendingText(null)
     setLoading(true)
     setError(null)
     try {
@@ -216,7 +225,7 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
 	      const useRef = Boolean(imageUrl)
 	      const apiModel = faceIdEnabled ? model.apiModel : resolveImageApiModel(model, useRef)
 	      const res = await createImage(text, {
-	        provider: model.provider,
+	        provider: mock ? 'mock' : model.provider,
 	        model: apiModel,
 	        generation_mode: faceIdEnabled ? 'face_id' : 'standard',
 	        width: outputSize.width,
@@ -239,10 +248,11 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
       const allUrls = urls.length > 0 ? urls : [primary]
       setLastUrls(allUrls)
       const variantNote = allUrls.length > 1 ? ` · ${allUrls.length} biến thể` : ''
+      const modelLabel = mock ? `${model.label} (test miễn phí — mock)` : model.label
       onGenerated({
         imageUrl: primary,
         imageUrls: allUrls,
-        message: `Ảnh đã tạo — ${model.label} · ${outputSize.resolutionLabel}${variantNote}`,
+        message: `Ảnh đã tạo — ${modelLabel} · ${outputSize.resolutionLabel}${variantNote}`,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -295,6 +305,17 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
           </div>
         )}
 
+        {pendingText && (
+          <div className="vs-confirm-bar">
+            <button type="button" className="vs-confirm-run" onClick={() => runGenerate(pendingText, false)}>
+              ✅ Tạo thật (tính phí — {model.label})
+            </button>
+            <button type="button" className="vs-confirm-mock" onClick={() => runGenerate(pendingText, true)}>
+              🧪 Test miễn phí trước
+            </button>
+            <button type="button" onClick={() => setPendingText(null)}>✖ Huỷ</button>
+          </div>
+        )}
         {error && <div className="vs-image-error">{error}</div>}
 
         {settingsOpen && (

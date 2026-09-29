@@ -258,6 +258,30 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertEqual(image_response.status_code, 200)
         self.assertTrue(image_response.content.startswith(b"\x89PNG\r\n\x1a\n"))
 
+    def test_create_image_response_has_imageUrl_and_imageUrls_for_frontend(self):
+        """AiImageStudio.tsx doc res.imageUrls/res.imageUrl - thieu 2 field nay se bao 'API khong tra URL anh' du HTTP 201."""
+        response = self.client.post("/api/image", json={"prompt": "test", "provider": "mock", "num_images": 3})
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("imageUrl", body)
+        self.assertIn("imageUrls", body)
+        self.assertEqual(len(body["imageUrls"]), 3)
+        self.assertEqual(body["imageUrl"], body["imageUrls"][0])
+
+    def test_create_image_reference_image_rejected_clearly(self):
+        response = self.client.post(
+            "/api/image", json={"prompt": "test", "provider": "mock", "image_url": "/api/media/x.png"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("tham chiếu", response.json()["detail"])
+
+    def test_create_image_face_id_rejected_clearly(self):
+        response = self.client.post(
+            "/api/image", json={"prompt": "test", "provider": "mock", "generation_mode": "face_id"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("FaceID", response.json()["detail"])
+
     def test_create_image_unsupported_provider_rejected(self):
         response = self.client.post("/api/image", json={"prompt": "x", "provider": "replicate"})
         self.assertEqual(response.status_code, 400)

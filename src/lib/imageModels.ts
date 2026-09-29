@@ -1,4 +1,4 @@
-export type ImageProvider = 'novita' | 'replicate' | 'openrouter'
+export type ImageProvider = 'novita' | 'replicate' | 'openrouter' | 'together'
 export type ImageModelId = string
 export type ImageQualityTier = 'cuc_cao' | 'cao' | 'chuan' | 'toc_do'
 
@@ -72,6 +72,40 @@ const SEEDREAM_50: ImageModel = {
   resolutionMode: 'tiers',
 }
 
+const FLUX_2_DEV: ImageModel = {
+  id: 'flux-2-dev-together',
+  provider: 'together',
+  apiModel: 'black-forest-labs/FLUX.2-dev',
+  label: 'FLUX.2 Dev (Together.ai)',
+  brand: 'Black Forest Labs',
+  qualityTier: 'chuan',
+  qualityLabel: 'Chuẩn',
+  desc: 'Model FLUX rẻ nhất trên Together.ai (~0.0154 USD/megapixel) — provider duy nhất đã có API key thật trên máy này.',
+  strengths: ['Chi phí thấp', 'Có key thật sẵn sàng', 'Chất lượng ổn cho bản nháp'],
+  capabilities: ['Text-to-image'],
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '2K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
+const FLUX_2_PRO: ImageModel = {
+  id: 'flux-2-pro-together',
+  provider: 'together',
+  apiModel: 'black-forest-labs/FLUX.2-pro',
+  label: 'FLUX.2 Pro (Together.ai)',
+  brand: 'Black Forest Labs',
+  qualityTier: 'cao',
+  qualityLabel: 'Cao',
+  desc: 'Bản FLUX chất lượng cao hơn trên Together.ai (~0.03 USD/megapixel) — provider duy nhất đã có API key thật trên máy này.',
+  strengths: ['Chất lượng cao', 'Có key thật sẵn sàng'],
+  capabilities: ['Text-to-image'],
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '2K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
 const IMAGEN_4_ULTRA: ImageModel = {
   id: 'imagen-4-ultra',
   provider: 'replicate',
@@ -113,8 +147,8 @@ const SEEDREAM_45: ImageModel = {
 /** Nhóm theo cấp chất lượng (cao → thấp). */
 export const IMAGE_MODEL_GROUPS: { tier: ImageQualityTier; label: string; models: ImageModel[] }[] = [
   { tier: 'cuc_cao', label: IMAGE_QUALITY_LABELS.cuc_cao, models: [SEEDREAM_50, IMAGEN_4_ULTRA] },
-  { tier: 'cao', label: IMAGE_QUALITY_LABELS.cao, models: [] },
-  { tier: 'chuan', label: IMAGE_QUALITY_LABELS.chuan, models: [SEEDREAM_45] },
+  { tier: 'cao', label: IMAGE_QUALITY_LABELS.cao, models: [FLUX_2_PRO] },
+  { tier: 'chuan', label: IMAGE_QUALITY_LABELS.chuan, models: [SEEDREAM_45, FLUX_2_DEV] },
   { tier: 'toc_do', label: IMAGE_QUALITY_LABELS.toc_do, models: [] },
 ]
 
@@ -132,7 +166,9 @@ export const IMAGE_BRAND_GROUPS = [...new Set(ALL_IMAGE_MODELS.map((model) => mo
   models: ALL_IMAGE_MODELS.filter((model) => model.brand === brand),
 }))
 
-export const DEFAULT_IMAGE_MODEL_ID: ImageModelId = 'seedream-4.5'
+// FLUX (Together.ai) la provider anh duy nhat da co API key that tren may nay (Seedream/Imagen
+// dung novita/replicate - chua co key) - dat lam mac dinh de nut Tao anh thuc su dung duoc.
+export const DEFAULT_IMAGE_MODEL_ID: ImageModelId = 'flux-2-dev-together'
 
 export const IMAGE_SIZE_PRESETS: { id: string; label: string; width: number; height: number; ratio: string }[] = [
   { id: 'sq', label: '1:1', width: 1024, height: 1024, ratio: '1:1' },
@@ -229,6 +265,7 @@ export const PROVIDER_LABEL: Record<ImageProvider, string> = {
   openrouter: 'OpenAI qua OpenRouter',
   novita: 'Novita AI',
   replicate: 'Replicate',
+  together: 'Together.ai',
 }
 
 export const BRAND_ICON: Record<ImageModel['brand'], string> = {

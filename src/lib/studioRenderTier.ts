@@ -29,9 +29,11 @@ export function tierLabel(tier: StudioRenderTier): string {
 // trong catalog (chỉ có trên Fal, không có provider thay thế) — đổi sang model thật đang dùng
 // được: Seedream 5.0 Lite (Novita, cực cao) cho Đạo diễn, Seedream 4.5 (Novita, chuẩn) cho
 // Tiêu chuẩn.
+// FLUX (Together.ai) la provider anh duy nhat da co API key that tren may nay - Seedream/Imagen
+// dung novita/replicate (chua co key), se loi ngay khi bam Tao neu de mac dinh.
 export const DEFAULT_IMAGE_MODEL_BY_TIER: Record<StudioRenderTier, string> = {
-  director: 'seedream-5.0-lite',
-  standard: 'seedream-4.5',
+  director: 'flux-2-pro-together',
+  standard: 'flux-2-dev-together',
 }
 
 export const DEFAULT_VIDEO_MODEL_BY_TIER: Record<StudioRenderTier, string> = {

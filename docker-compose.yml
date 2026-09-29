@@ -11,6 +11,7 @@ services:
       CRAZYROUTER_API_KEY: ${CRAZYROUTER_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+      TOGETHER_API_KEY: ${TOGETHER_API_KEY:-}
     volumes:
       - "${NOTIAGENT_DATA_ROOT:-D:/NotiAgentData}:/data"
     restart: unless-stopped
