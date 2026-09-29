@@ -1,6 +1,6 @@
 import type { StudioRenderTier } from './studioRenderTier'
 
-export type VideoProvider = 'replicate' | 'novita' | 'atlascloud' | 'crazyrouter'
+export type VideoProvider = 'replicate' | 'novita' | 'atlascloud' | 'crazyrouter' | 'together'
 export type VideoModelId = string
 
 export type VideoModel = {
@@ -111,6 +111,40 @@ export const MODEL_GROUPS: { brand: VideoModel['brand']; models: VideoModel[] }[
         tier: 'pro',
         studioTier: 'director',
         desc: 'Atlas Cloud · bản mới nhất (31/7/2026), clip 1 lần tới 30s, tới 50 ảnh tham chiếu, âm thanh sinh cùng hình.',
+        maxDuration: 30,
+        durations: [4, 8, 12, 16, 20, 24, 30],
+        ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+        defaultQuality: '720p',
+        qualityOptions: ['480p', '720p'],
+        nativeAudio: 'always',
+      },
+      // 2026-09-30: Together.ai (co TOGETHER_API_KEY that tren may nay) - slug xac minh THAT tu
+      // GET /v1/models: ByteDance/Seedance-2.0 ($0.16/s o 720p text/anh->video, am thanh dong bo,
+      // toi 9 anh tham chieu) va ByteDance/Seedance-2.5 (480p $0.115/s, 720p tu $0.249/s).
+      {
+        id: 'seedance-2.0-together',
+        provider: 'together',
+        apiModel: 'ByteDance/Seedance-2.0',
+        label: 'Seedance 2.0 (Together.ai)',
+        brand: 'Seedance',
+        tier: 'standard',
+        studioTier: 'director',
+        desc: 'Together.ai · có key sẵn sàng, ảnh tham chiếu + âm thanh đồng bộ, $0.16/giây ở 720p, 4–15s.',
+        maxDuration: 15,
+        ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+        defaultQuality: '720p',
+        qualityOptions: ['480p', '720p'],
+        nativeAudio: 'optional',
+      },
+      {
+        id: 'seedance-2.5-together',
+        provider: 'together',
+        apiModel: 'ByteDance/Seedance-2.5',
+        label: 'Seedance 2.5 (Together.ai)',
+        brand: 'Seedance',
+        tier: 'pro',
+        studioTier: 'director',
+        desc: 'Together.ai · bản mới nhất, âm thanh sinh cùng hình; 480p $0.115/giây, 720p từ $0.249/giây.',
         maxDuration: 30,
         durations: [4, 8, 12, 16, 20, 24, 30],
         ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
@@ -387,20 +421,17 @@ export const MODEL_GROUPS: { brand: VideoModel['brand']; models: VideoModel[] }[
         ratios: ['16:9', '9:16', '1:1'],
         defaultQuality: '1080p',
       },
-      // 2026-09-29: MiniMax H3 (ten chinh thuc, con goi Hailuo 3/H3) - da xac minh THAT qua web
-      // search: ra mat 31/7/2026, 2K native + am thanh stereo, toi 15s, toi 9 anh + 3 video + 3
-      // audio tham chieu 1 lan. CHUA tim thay tren Replicate/Novita (chi co API rieng cua MiniMax,
-      // minimax.io) - de provider=novita nhu fallback catalog nhung GHI RO trong desc la chua xac
-      // minh duoc endpoint, khac voi cac model khac da co slug provider xac nhan that.
+      // 2026-09-30: MiniMax H3 co tren Together.ai (slug xac minh that qua GET /v1/models:
+      // MiniMaxAI/MiniMax-H3, $0.1391/giay o 2K). Ra mat 31/7/2026, 2K native + am thanh stereo.
       {
         id: 'minimax-h3',
-        provider: 'novita',
-        apiModel: 'minimax-h3-t2v',
+        provider: 'together',
+        apiModel: 'MiniMaxAI/MiniMax-H3',
         label: 'MiniMax H3',
         brand: 'MiniMax',
         tier: 'pro',
         studioTier: 'director',
-        desc: 'MiniMax · bản mới nhất (31/7/2026), 2K native + âm thanh stereo, tới 15s. ⚠️ Chưa xác minh được endpoint qua Novita/Replicate — chỉ có API riêng minimax.io, nút này mang tính danh mục, cần kiểm tra thêm trước khi dùng thật.',
+        desc: 'MiniMax · bản mới nhất (31/7/2026) qua Together.ai, 2K native + âm thanh stereo, tới 15s, $0.139/giây.',
         maxDuration: 15,
         durations: [6, 10, 15],
         ratios: ['16:9', '9:16', '1:1'],

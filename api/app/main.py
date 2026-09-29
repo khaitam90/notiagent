@@ -29,6 +29,7 @@ app = FastAPI(title="NotiAgent API", version="0.1.0")
 ATLAS_VIDEO_URL = "https://api.atlascloud.ai/api/v1/model/generateVideo"
 ATLAS_PREDICTION_URL = "https://api.atlascloud.ai/api/v1/model/prediction"
 ATLAS_MVP_MODEL = "bytedance/seedance-v1-pro-fast/text-to-video"
+TOGETHER_VIDEO_URL = "https://api.together.xyz/v2/videos"
 ATLAS_RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
 CRAZY_VIDEO_URL = "https://crazyrouter.com/v1/video/create"
 CRAZY_STATUS_URL = "https://crazyrouter.com/v1/video/query"
@@ -157,10 +158,11 @@ class VideoCreate(BaseModel):
     provider: str = "crazyrouter"
     model: str = CRAZY_MVP_MODEL
     aspect_ratio: str = "16:9"
-    duration: int = Field(default=5, ge=2, le=12)
+    duration: int = Field(default=5, ge=2, le=15)
     quality: str = "480p"
     image_url: str | None = None
     video_url: str | None = None
+    generate_audio: bool = False
 
 
 class ImageCreate(BaseModel):
@@ -939,6 +941,83 @@ def atlas_video_payload(body: VideoCreate) -> dict[str, Any]:
     }
 
 
+def reference_image_for_provider(image_url: str) -> str:
+    import base64
+    prefix = "/api-proxy/api/media/"
+    if image_url.startswith(("http://", "https://", "data:")):
+        return image_url
+    if not image_url.startswith(prefix):
+        raise HTTPException(status_code=400, detail="Ảnh tham chiếu không hợp lệ")
+    path = UPLOAD_DIR / Path(image_url.removeprefix(prefix)).name
+    if not path.is_file():
+        raise HTTPException(status_code=400, detail="Không tìm thấy ảnh tham chiếu đã tải lên")
+    mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+
+def together_video_payload(body: VideoCreate) -> dict[str, Any]:
+    # Together.ai /v1/videos: {model, prompt, seconds, ratio, resolution, generate_audio,
+    # media.reference_images}. Anh tham chieu local (/api-proxy/api/media/...) duoc doc tu
+    # UPLOAD_DIR va gui dang data URI vi Together khong truy cap duoc 127.0.0.1.
+    if not body.model or "/" not in body.model:
+        raise HTTPException(status_code=400, detail=f"Model Together.ai không hợp lệ: '{body.model}'")
+    if body.video_url:
+        raise HTTPException(status_code=400, detail="Together.ai chưa hỗ trợ video tham chiếu ở backend này")
+    payload: dict[str, Any] = {
+        "model": body.model,
+        "prompt": body.prompt.strip(),
+        "seconds": str(body.duration),
+        "ratio": body.aspect_ratio,
+        "resolution": body.quality,
+        "generate_audio": body.generate_audio,
+    }
+    if body.image_url:
+        payload["media"] = {"reference_images": [reference_image_for_provider(body.image_url)]}
+    return payload
+
+
+def together_status_response(job_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    raw_status = str(payload.get("status") or "").lower()
+    outputs = payload.get("outputs") if isinstance(payload.get("outputs"), dict) else {}
+    video_url = str(outputs.get("video_url") or "")
+    if raw_status == "completed":
+        state = "success"
+    elif raw_status == "failed":
+        state = "fail"
+    else:
+        state = "generating"
+    urls: list[str] = []
+    if state == "success" and video_url:
+        # Link video cua Together la link tam - tai ve luu vao UPLOAD_DIR de giu lau dai
+        # (ten file theo job id nen goi status nhieu lan khong tai lai).
+        filename = f"together-{re.sub(r'[^A-Za-z0-9_-]', '', job_id)}.mp4"
+        target = UPLOAD_DIR / filename
+        try:
+            if not target.is_file():
+                downloaded = httpx.get(video_url, timeout=180, follow_redirects=True)
+                downloaded.raise_for_status()
+                target.write_bytes(downloaded.content)
+            video_url = media_url(filename)
+        except httpx.HTTPError:
+            pass  # khong tai duoc thi van tra link goc
+        urls = [video_url]
+    error = payload.get("error")
+    fail_message = None
+    if state == "fail":
+        fail_message = str(error.get("message") if isinstance(error, dict) else error or "Together.ai báo tạo video thất bại")
+    result: dict[str, Any] = {"resultUrls": urls}
+    if urls:
+        result["videoUrl"] = urls[0]
+    return {
+        "data": {
+            "taskId": f"together:{job_id}",
+            "state": state,
+            "resultJson": json.dumps(result),
+            "failMsg": fail_message,
+        }
+    }
+
+
 def crazy_headers() -> dict[str, str]:
     token = os.getenv("CRAZYROUTER_API_KEY", "").strip()
     if not token:
@@ -1333,6 +1412,20 @@ def create_video(body: VideoCreate) -> dict[str, Any]:
             raise HTTPException(status_code=502, detail="CrazyRouter không trả về task ID")
         return {"taskId": f"crazy:{task_id}", "status": str(data.get("status") or "processing")}
 
+    if body.provider == "together":
+        try:
+            response = post_with_retry(TOGETHER_VIDEO_URL, headers=together_headers(), json_body=together_video_payload(body), timeout=120)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise HTTPException(status_code=502, detail=provider_error_detail("Together.ai từ chối yêu cầu tạo video", error)) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=502, detail=f"Không kết nối được Together.ai: {error}") from error
+        data = response.json()
+        job_id = str(data.get("id") or "").strip()
+        if not job_id:
+            raise HTTPException(status_code=502, detail="Together.ai không trả về job ID")
+        return {"taskId": f"together:{job_id}", "status": "processing"}
+
     try:
         response = post_with_retry(ATLAS_VIDEO_URL, headers=atlas_headers(), json_body=atlas_video_payload(body))
         response.raise_for_status()
@@ -1381,6 +1474,17 @@ def video_status(taskId: str) -> dict[str, Any]:
         except httpx.HTTPError as error:
             raise HTTPException(status_code=502, detail=f"Không kết nối được CrazyRouter: {error}") from error
         return crazy_status_response(raw_task_id, response.json())
+
+    if taskId.startswith("together:"):
+        job_id = taskId.removeprefix("together:")
+        try:
+            response = get_with_retry(f"{TOGETHER_VIDEO_URL}/{job_id}", headers=together_headers())
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise HTTPException(status_code=502, detail=provider_error_detail("Không đọc được trạng thái Together.ai", error)) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=502, detail=f"Không kết nối được Together.ai: {error}") from error
+        return together_status_response(job_id, response.json())
 
     try:
         response = get_with_retry(f"{ATLAS_PREDICTION_URL}/{taskId}", headers=atlas_headers())

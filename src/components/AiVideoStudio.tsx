@@ -465,6 +465,8 @@ Chỉ trả kịch bản tiếng Việt, không giải thích thêm.`
       image_url: imageUrl,
       video_url: videoUrl,
       tool_id: activeTool?.id,
+      // Model co am thanh dong bo (Seedance 2.x, H3...) - bat de video co nhac/loi that.
+      generate_audio: !!model.nativeAudio,
     })
     const modelLabel = opts?.mock ? `${model.label} (test miễn phí — mock)` : model.label
     const reply = res.taskId

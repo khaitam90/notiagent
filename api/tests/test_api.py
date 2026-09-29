@@ -212,6 +212,40 @@ class ApiSmokeTests(unittest.TestCase):
             saved = extract_image_urls([{"url": remote}], localize=True)
         self.assertTrue(saved[0].endswith(".jpg") and saved[0].startswith("/api-proxy/api/media/"))
 
+    def test_together_video_payload_and_status(self):
+        from unittest import mock
+
+        import app.main as main
+        from app.main import VideoCreate, together_status_response, together_video_payload
+
+        ref = main.UPLOAD_DIR / "ref-test.jpg"
+        ref.write_bytes(bytes([0xFF, 0xD8, 0xFF]) + b"ref")
+        payload = together_video_payload(VideoCreate(
+            prompt=" dj ", provider="together", model="ByteDance/Seedance-2.0", aspect_ratio="16:9",
+            duration=10, quality="720p", image_url="/api-proxy/api/media/ref-test.jpg", generate_audio=True,
+        ))
+        self.assertEqual(payload["seconds"], "10")
+        self.assertEqual(payload["prompt"], "dj")
+        self.assertTrue(payload["generate_audio"])
+        self.assertTrue(payload["media"]["reference_images"][0].startswith("data:image/jpeg;base64,"))
+        with self.assertRaises(main.HTTPException):
+            together_video_payload(VideoCreate(prompt="x", provider="together", model="khong-co-slash"))
+        with self.assertRaises(main.HTTPException):
+            together_video_payload(VideoCreate(prompt="x", provider="together", model="a/b", image_url="/etc/passwd"))
+        ref.unlink()
+
+        running = together_status_response("job1", {"status": "in_progress"})
+        self.assertEqual(running["data"]["state"], "generating")
+        failed = together_status_response("job1", {"status": "failed", "error": {"message": "boom"}})
+        self.assertEqual((failed["data"]["state"], failed["data"]["failMsg"]), ("fail", "boom"))
+
+        fake = mock.Mock(content=b"mp4-bytes", raise_for_status=lambda: None)
+        with mock.patch("app.main.httpx.get", return_value=fake):
+            done = together_status_response("job/2", {"status": "completed", "outputs": {"video_url": "https://x.test/v.mp4"}})
+        self.assertEqual(done["data"]["state"], "success")
+        self.assertIn("/api-proxy/api/media/together-job2.mp4", done["data"]["resultJson"])
+        (main.UPLOAD_DIR / "together-job2.mp4").unlink()
+
     def test_recover_interrupted_runs_marks_stuck_as_failed(self):
         from app.main import db, recover_interrupted_runs
 

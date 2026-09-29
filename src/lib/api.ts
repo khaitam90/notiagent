@@ -171,6 +171,7 @@ export async function createVideo(body: {
   image_url?: string
   video_url?: string
   tool_id?: string
+  generate_audio?: boolean
 }) {
   const r = await fetch(`${API_BASE}/api/video`, {
     method: 'POST',

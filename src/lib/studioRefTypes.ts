@@ -2,7 +2,7 @@ import type { ImageToolPreset } from './imageToolPresets'
 import type { VideoTool } from './videoTools'
 
 export type RefSlotMode = 'required' | 'optional' | 'none'
-export type StudioVideoProvider = 'replicate' | 'novita' | 'atlascloud' | 'crazyrouter'
+export type StudioVideoProvider = 'replicate' | 'novita' | 'atlascloud' | 'crazyrouter' | 'together'
 
 export type ToolRefConfig = {
   image: RefSlotMode

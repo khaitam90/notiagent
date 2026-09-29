@@ -117,6 +117,11 @@ const VIDEO_PRICE: Record<string, VideoPriceRule> = {
   // luc them - co tinh khong dua vao day, de hasVideoPriceData() bao "chua co bang gia" trung thuc
   // thay vi doan bang gia mac dinh chung.
   'dreamactor-m2-replicate': { silent: 0.05 },
+  // 2026-09-30: gia THAT lay tu GET https://api.together.xyz/v1/models (pricing.video). Seedance
+  // 2.0 chi cong bo 720p ($0.16/s) - 480p tinh cung muc nay (uoc tinh cao, an toan).
+  'seedance-2.0-together': { silent: 0.16, audio: 0.16 },
+  'seedance-2.5-together': { silent: 0.249, audio: 0.249, byQuality: { '480p': { silent: 0.115, audio: 0.115 } } },
+  'minimax-h3': { silent: 0.1391, audio: 0.1391 },
   'kling-3.0-motion-control-replicate': { silent: 0.1134 },
 }
 
