@@ -614,6 +614,10 @@ def run_workflow_endpoint(workflow_id: str, body: WorkflowRunCreate) -> dict[str
     return {"run": run_payload, "mode": media}
 
 
+# Frontend (lib/api.ts uploadMedia()) goi "/api/upload" (so it), khong phai "/api/uploads" (so
+# nhieu) - lech duong dan nay khien MOI lan tai anh/video tham chieu len (AiVideoStudio, Workflow
+# Hub run panel) deu 404 tu truoc gio. Dang ky ca 2 duong dan tro chung 1 ham de an toan nguoc.
+@app.post("/api/upload", status_code=201)
 @app.post("/api/uploads", status_code=201)
 def upload(file: UploadFile = File(...)) -> dict[str, Any]:
     suffix = Path(file.filename or "upload.bin").suffix.lower()
