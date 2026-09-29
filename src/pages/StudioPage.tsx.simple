@@ -1,0 +1,530 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Film, Image as ImageIcon, Music, Type, Wand2, Scissors, Layers, Play, Pause,
+  Download, Upload, Loader2, Trash2, Sparkles, Video, ChevronDown, Maximize2,
+  SkipBack, SkipForward, ZoomIn, ZoomOut,
+} from 'lucide-react'
+import { createImage, createVideo } from '../lib/api'
+import {
+  AssetItem, TimelineClip, clipsAtTime, exportProject, formatTime, totalDuration, uid,
+} from '../lib/timeline'
+
+const TOOLS = [
+  { id: 'media', icon: Film, label: 'Media' },
+  { id: 'text', icon: Type, label: 'Text' },
+  { id: 'audio', icon: Music, label: 'Audio' },
+  { id: 'fx', icon: Wand2, label: 'Effects' },
+  { id: 'cut', icon: Scissors, label: 'Cut' },
+  { id: 'layer', icon: Layers, label: 'Layers' },
+]
+
+const PANEL_TABS = [
+  { id: 'upload', label: 'Upload' },
+  { id: 'ai', label: 'AI Studio' },
+  { id: 'templates', label: 'Templates' },
+]
+
+const PX_PER_SEC = 80
+
+export default function StudioPage() {
+  const [tool, setTool] = useState('media')
+  const [panelTab, setPanelTab] = useState('upload')
+  const [prompt, setPrompt] = useState('Tô phở Việt Nam, ánh sáng cinematic, close-up')
+  const [model, setModel] = useState('kling')
+  const [ratio, setRatio] = useState('9:16')
+  const [duration, setDuration] = useState(5)
+  const [style, setStyle] = useState('cinematic')
+  const [mode, setMode] = useState<'video' | 'image'>('video')
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<{ taskId?: string; message?: string; status?: string; imageUrl?: string } | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const [playhead, setPlayhead] = useState(0)
+  const [zoom, setZoom] = useState(1)
+  const [assets, setAssets] = useState<AssetItem[]>([])
+  const [clips, setClips] = useState<TimelineClip[]>([])
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [rightOpen, setRightOpen] = useState(true)
+
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const tickRef = useRef<number | null>(null)
+
+  const timelineDuration = useMemo(() => totalDuration(clips, duration), [clips, duration])
+  const activeVideo = useMemo(() => clipsAtTime(clips, playhead, 'video')[0], [clips, playhead])
+  const pxPerSec = PX_PER_SEC * zoom
+
+  const addClip = useCallback((asset: AssetItem, track: TimelineClip['track'], dur: number) => {
+    const startSec = track === 'video'
+      ? Math.max(0, ...clips.filter((c) => c.track === 'video').map((c) => c.startSec + c.durationSec), 0)
+      : 0
+    const clip: TimelineClip = {
+      id: uid(),
+      type: asset.type,
+      track,
+      label: asset.name,
+      src: asset.src,
+      startSec,
+      durationSec: dur,
+    }
+    setClips((prev) => [...prev, clip])
+    setSelectedClipId(clip.id)
+  }, [clips])
+
+  const importFiles = (files: FileList | null) => {
+    if (!files?.length) return
+    Array.from(files).forEach((file) => {
+      const src = URL.createObjectURL(file)
+      const type: AssetItem['type'] = file.type.startsWith('audio') ? 'audio' : file.type.startsWith('image') ? 'image' : 'video'
+      const asset: AssetItem = { id: uid(), type, name: file.name, src, thumbnail: type === 'image' ? src : undefined }
+      setAssets((prev) => [asset, ...prev])
+      addClip(asset, type === 'audio' ? 'audio' : 'video', type === 'audio' ? 10 : Math.max(3, duration))
+    })
+  }
+
+  const generate = async () => {
+    setLoading(true)
+    setResult(null)
+    try {
+      if (mode === 'image') {
+        const res = await createImage({
+          prompt,
+          provider: 'fal',
+        })
+        const imageUrl = res.images?.[0]?.url || res.image?.url || res.url
+        setResult({ status: 'ok', message: 'Ảnh AI đã tạo', imageUrl })
+        if (imageUrl) {
+          const asset: AssetItem = { id: uid(), type: 'image', name: 'AI Image', src: imageUrl, thumbnail: imageUrl }
+          setAssets((prev) => [asset, ...prev])
+          addClip(asset, 'video', 3)
+        }
+      } else {
+        const res = await createVideo({ prompt, model, aspect_ratio: ratio, duration, style_preset: style })
+        setResult(res)
+        if (res.taskId) {
+          const asset: AssetItem = { id: uid(), type: 'video', name: `AI ${res.taskId.slice(0, 8)}`, src: '' }
+          setAssets((prev) => [asset, ...prev])
+        }
+      }
+    } catch (e) {
+      setResult({ message: e instanceof Error ? e.message : String(e), status: 'error' })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const removeClip = (id: string) => {
+    setClips((prev) => prev.filter((c) => c.id !== id))
+    if (selectedClipId === id) setSelectedClipId(null)
+  }
+
+  const exportPrimaryVideo = () => {
+    const videoClip = clips.find((c) => c.track === 'video' && c.src)
+    if (!videoClip?.src) {
+      const blob = new Blob([exportProject(clips, assets)], { type: 'application/json' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `noti-studio-${Date.now()}.json`
+      a.click()
+      return
+    }
+    const a = document.createElement('a')
+    a.href = videoClip.src
+    a.download = `${videoClip.label || 'clip'}.mp4`
+    a.target = '_blank'
+    a.click()
+  }
+
+  useEffect(() => {
+    if (!playing) {
+      if (tickRef.current) cancelAnimationFrame(tickRef.current)
+      return
+    }
+    let last = performance.now()
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000
+      last = now
+      setPlayhead((p) => {
+        const next = p + dt
+        if (next >= timelineDuration) {
+          setPlaying(false)
+          return timelineDuration
+        }
+        return next
+      })
+      tickRef.current = requestAnimationFrame(tick)
+    }
+    tickRef.current = requestAnimationFrame(tick)
+    return () => { if (tickRef.current) cancelAnimationFrame(tickRef.current) }
+  }, [playing, timelineDuration])
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el || !activeVideo?.src) return
+    if (el.src !== activeVideo.src) {
+      el.src = activeVideo.src
+      el.currentTime = Math.max(0, playhead - activeVideo.startSec)
+    }
+    if (playing) el.play().catch(() => {})
+    else el.pause()
+  }, [activeVideo, playhead, playing])
+
+  const ratioClass = ratio === '16:9' ? 'ratio-169' : ratio === '1:1' ? 'ratio-11' : 'ratio-916'
+
+  const previewContent = () => {
+    if (result?.status === 'error') {
+      return <div className="cc-preview-empty"><span className="cc-preview-error">{result.message}</span></div>
+    }
+    if (activeVideo?.src) {
+      return (
+        <video
+          ref={videoRef}
+          className="cc-preview-media"
+          playsInline
+          muted={!clips.some((c) => c.track === 'audio' && clipsAtTime(clips, playhead, 'audio').includes(c))}
+        />
+      )
+    }
+    if (result?.imageUrl) {
+      return <img src={result.imageUrl} alt="Generated" className="cc-preview-media" />
+    }
+    if (result) {
+      return (
+        <div className="cc-preview-empty">
+          <Sparkles size={32} className="cc-preview-icon" />
+          <p>{result.message || 'Đã gửi render AI'}</p>
+          {result.taskId && <small>Task: {result.taskId}</small>}
+          <small className="cc-preview-hint">Nhận Telegram khi xong — paste URL vào Upload</small>
+        </div>
+      )
+    }
+    return (
+      <div className="cc-preview-empty">
+        <Video size={40} className="cc-preview-icon" />
+        <p>Video Preview</p>
+        <small className="cc-preview-hint">Upload media hoặc tạo clip AI</small>
+      </div>
+    )
+  }
+
+  const renderPanelContent = () => {
+    if (panelTab === 'ai') {
+      return (
+        <div className="cc-panel-ai">
+          <div className="cc-ai-hero">
+            <Sparkles size={20} />
+            <div>
+              <strong>AI Video Studio</strong>
+              <span>Mô tả ý tưởng — AI tạo clip</span>
+            </div>
+          </div>
+          <div className="cc-field">
+            <label>Loại nội dung</label>
+            <div className="cc-segment">
+              <button type="button" className={mode === 'video' ? 'active' : ''} onClick={() => setMode('video')}>Video</button>
+              <button type="button" className={mode === 'image' ? 'active' : ''} onClick={() => setMode('image')}>Ảnh</button>
+            </div>
+          </div>
+          <div className="cc-field">
+            <label>Prompt</label>
+            <textarea className="cc-textarea" value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={4} placeholder="Mô tả video bạn muốn tạo..." />
+          </div>
+          {mode === 'video' && (
+            <>
+              <div className="cc-field-row">
+                <div className="cc-field">
+                  <label>Model</label>
+                  <select className="cc-select" value={model} onChange={(e) => setModel(e.target.value)}>
+                    <option value="kling">Kling 3.0</option>
+                    <option value="seedance">Seedance</option>
+                  </select>
+                </div>
+                <div className="cc-field">
+                  <label>Style</label>
+                  <select className="cc-select" value={style} onChange={(e) => setStyle(e.target.value)}>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="anime">Anime</option>
+                    <option value="realistic">Realistic</option>
+                    <option value="epic">Epic</option>
+                  </select>
+                </div>
+              </div>
+              <div className="cc-field-row">
+                <div className="cc-field">
+                  <label>Tỷ lệ</label>
+                  <select className="cc-select" value={ratio} onChange={(e) => setRatio(e.target.value)}>
+                    <option value="9:16">9:16</option>
+                    <option value="16:9">16:9</option>
+                    <option value="1:1">1:1</option>
+                  </select>
+                </div>
+                <div className="cc-field">
+                  <label>Thời lượng</label>
+                  <select className="cc-select" value={duration} onChange={(e) => setDuration(Number(e.target.value))}>
+                    <option value={5}>5s</option>
+                    <option value={10}>10s</option>
+                    <option value={15}>15s</option>
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
+          <button type="button" className="cc-btn-generate" disabled={loading} onClick={generate}>
+            {loading ? <><Loader2 size={16} className="spin" /> Đang tạo...</> : <><Sparkles size={16} /> Tạo {mode === 'image' ? 'ảnh' : 'video'} AI</>}
+          </button>
+        </div>
+      )
+    }
+
+    if (panelTab === 'templates') {
+      return (
+        <div className="cc-templates">
+          {['TikTok Viral', 'YouTube Intro', 'Cinematic 4K', 'Product Ad'].map((t) => (
+            <button key={t} type="button" className="cc-template-card" onClick={() => setPrompt(`${t}: `)}>
+              <div className="cc-template-thumb" />
+              <span>{t}</span>
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <button type="button" className="cc-upload-zone" onClick={() => fileRef.current?.click()}>
+          <Upload size={24} />
+          <span>Kéo thả hoặc click để upload</span>
+          <small>Video · Audio · Ảnh</small>
+        </button>
+        <div className="cc-asset-grid">
+          {assets.length === 0 && (
+            <p className="cc-empty">Chưa có media — upload hoặc tạo AI</p>
+          )}
+          {assets.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="cc-asset-item"
+              onClick={() => addClip(a, a.type === 'audio' ? 'audio' : 'video', a.type === 'image' ? 3 : duration)}
+              title="Thêm vào timeline"
+            >
+              {a.thumbnail ? (
+                <img src={a.thumbnail} alt="" />
+              ) : (
+                <div className="cc-asset-placeholder">
+                  {a.type === 'audio' ? <Music size={18} /> : a.type === 'image' ? <ImageIcon size={18} /> : <Film size={18} />}
+                </div>
+              )}
+              <span>{a.name.slice(0, 14)}</span>
+            </button>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <div className="cc-studio">
+      <input ref={fileRef} type="file" accept="video/*,audio/*,image/*" multiple hidden onChange={(e) => importFiles(e.target.files)} />
+
+      {/* Top bar — CapCut style */}
+      <header className="cc-topbar">
+        <div className="cc-topbar-left">
+          <div className="cc-logo">
+            <span className="cc-logo-icon">C</span>
+            <span className="cc-logo-text">Studio</span>
+          </div>
+          <span className="cc-project-name">Untitled project</span>
+        </div>
+        <div className="cc-topbar-center">
+          <div className="cc-ratio-pills">
+            {(['9:16', '16:9', '1:1'] as const).map((r) => (
+              <button key={r} type="button" className={`cc-ratio-pill${ratio === r ? ' active' : ''}`} onClick={() => setRatio(r)}>
+                {r}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="cc-topbar-right">
+          <button type="button" className="cc-btn-ghost" onClick={() => fileRef.current?.click()}>
+            <Upload size={16} /> Import
+          </button>
+          <button type="button" className="cc-btn-export" onClick={exportPrimaryVideo}>
+            <Download size={16} /> Export
+          </button>
+        </div>
+      </header>
+
+      <div className="cc-workspace">
+        {/* Left tool rail */}
+        <nav className="cc-rail">
+          {TOOLS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`cc-rail-btn${tool === t.id ? ' active' : ''}`}
+              onClick={() => setTool(t.id)}
+            >
+              <t.icon size={22} strokeWidth={1.5} />
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* Left resource panel */}
+        <aside className="cc-panel">
+          <div className="cc-panel-tabs">
+            {PANEL_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`cc-panel-tab${panelTab === tab.id ? ' active' : ''}`}
+                onClick={() => setPanelTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+          <div className="cc-panel-body">{renderPanelContent()}</div>
+        </aside>
+
+        {/* Center preview */}
+        <main className="cc-canvas">
+          <div className="cc-canvas-inner">
+            <div className={`cc-preview-frame ${ratioClass}`}>
+              {previewContent()}
+            </div>
+          </div>
+          <div className="cc-transport">
+            <button type="button" className="cc-transport-btn" onClick={() => setPlayhead(0)}>
+              <SkipBack size={16} />
+            </button>
+            <button
+              type="button"
+              className="cc-transport-play"
+              onClick={() => { if (playhead >= timelineDuration) setPlayhead(0); setPlaying(!playing) }}
+            >
+              {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+            </button>
+            <button type="button" className="cc-transport-btn" onClick={() => setPlayhead(timelineDuration)}>
+              <SkipForward size={16} />
+            </button>
+            <div className="cc-timecode">{formatTime(playhead)} / {formatTime(timelineDuration)}</div>
+            <div className="cc-transport-spacer" />
+            <button type="button" className="cc-transport-btn" title="Fit">
+              <Maximize2 size={16} />
+            </button>
+          </div>
+        </main>
+
+        {/* Right properties — collapsible */}
+        {rightOpen && (
+          <aside className="cc-inspector">
+            <div className="cc-inspector-header">
+              <span>Properties</span>
+              <button type="button" className="cc-inspector-close" onClick={() => setRightOpen(false)}>×</button>
+            </div>
+            <div className="cc-inspector-body">
+              {selectedClipId ? (
+                (() => {
+                  const clip = clips.find((c) => c.id === selectedClipId)
+                  if (!clip) return null
+                  return (
+                    <>
+                      <div className="cc-field">
+                        <label>Clip</label>
+                        <input className="cc-input" readOnly value={clip.label} />
+                      </div>
+                      <div className="cc-field-row">
+                        <div className="cc-field">
+                          <label>Start</label>
+                          <input className="cc-input" readOnly value={`${clip.startSec.toFixed(1)}s`} />
+                        </div>
+                        <div className="cc-field">
+                          <label>Duration</label>
+                          <input className="cc-input" readOnly value={`${clip.durationSec.toFixed(1)}s`} />
+                        </div>
+                      </div>
+                      <div className="cc-field">
+                        <label>Track</label>
+                        <input className="cc-input" readOnly value={clip.track} />
+                      </div>
+                      <button type="button" className="cc-btn-danger" onClick={() => removeClip(clip.id)}>
+                        <Trash2 size={14} /> Xóa clip
+                      </button>
+                    </>
+                  )
+                })()
+              ) : (
+                <div className="cc-inspector-empty">
+                  <Layers size={28} />
+                  <p>Chọn clip trên timeline để chỉnh thuộc tính</p>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+        {!rightOpen && (
+          <button type="button" className="cc-inspector-toggle" onClick={() => setRightOpen(true)}>
+            <ChevronDown size={16} style={{ transform: 'rotate(-90deg)' }} />
+          </button>
+        )}
+      </div>
+
+      {/* Timeline — CapCut style */}
+      <footer className="cc-timeline">
+        <div className="cc-timeline-toolbar">
+          <button
+            type="button"
+            className="cc-tl-play"
+            onClick={() => { if (playhead >= timelineDuration) setPlayhead(0); setPlaying(!playing) }}
+          >
+            {playing ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}
+          </button>
+          <span className="cc-tl-time">{formatTime(playhead)}</span>
+          <div className="cc-tl-spacer" />
+          <button type="button" className="cc-tl-btn" onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))} title="Zoom out">
+            <ZoomOut size={14} />
+          </button>
+          <span className="cc-tl-zoom">{Math.round(zoom * 100)}%</span>
+          <button type="button" className="cc-tl-btn" onClick={() => setZoom((z) => Math.min(2, z + 0.25))} title="Zoom in">
+            <ZoomIn size={14} />
+          </button>
+        </div>
+        <div className="cc-timeline-scroll">
+          <div className="cc-timeline-inner" style={{ minWidth: timelineDuration * pxPerSec + 140 }}>
+            <div className="cc-ruler">
+              {Array.from({ length: Math.ceil(timelineDuration) + 1 }, (_, i) => (
+                <span key={i} className="cc-ruler-mark" style={{ left: 80 + i * pxPerSec }}>{formatTime(i)}</span>
+              ))}
+              <div className="cc-playhead" style={{ left: 80 + playhead * pxPerSec }} />
+            </div>
+            {(['video', 'audio', 'text'] as const).map((track) => (
+              <div key={track} className="cc-track">
+                <div className="cc-track-head">
+                  {track === 'video' ? <Film size={14} /> : track === 'audio' ? <Music size={14} /> : <Type size={14} />}
+                  <span>{track.charAt(0).toUpperCase() + track.slice(1)}</span>
+                </div>
+                <div className="cc-track-lane">
+                  {clips.filter((c) => c.track === track).map((clip) => (
+                    <div
+                      key={clip.id}
+                      className={`cc-clip cc-clip-${track}${selectedClipId === clip.id ? ' selected' : ''}`}
+                      style={{ left: clip.startSec * pxPerSec, width: Math.max(clip.durationSec * pxPerSec, 48) }}
+                      onClick={() => setSelectedClipId(clip.id)}
+                      title={clip.label}
+                    >
+                      <span>{clip.label.slice(0, 16)}</span>
+                      <button type="button" className="cc-clip-del" onClick={(e) => { e.stopPropagation(); removeClip(clip.id) }}>
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </footer>
+    </div>
+  )
+}

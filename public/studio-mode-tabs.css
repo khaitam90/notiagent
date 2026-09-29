@@ -1,0 +1,39 @@
+/* Tab Ảnh / Video — luôn hiện trong Studio (kể cả Dự án) */
+.noti-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bg, #141416);
+  border: 1px solid var(--border, #2a2a2e);
+}
+
+.noti-mode-tab {
+  padding: 10px 8px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted, #9ca3af);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.noti-mode-tab:hover {
+  color: var(--text, #f3f4f6);
+  background: var(--bg-hover, #1f1f23);
+}
+
+.noti-mode-tab.active {
+  color: #fff;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+}
+
+.sh-ai-composer-head.noti-has-mode-tabs .sh-ai-mode-inline {
+  display: none;
+}

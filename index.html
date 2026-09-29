@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0f0f10" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Nô Tì Agent" />
+    <link rel="manifest" href="/app/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/app/icons/icon-192.png" />
+    <title>Nô Tì Agent — Manus-style AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- PHẢI trước bundle — sửa draft trước khi React đọc localStorage -->
+    <script src="/app/studio-draft-fix.js?v=20260708-1"></script>
+    <script type="module" src="/src/main.tsx"></script>
+    <link rel="stylesheet" href="/app/studio-mode-tabs.css">
+    <link rel="stylesheet" href="/app/studio-preview-fix.css?v=20260707-1">
+    <link rel="stylesheet" href="/app/elevenlabs-dubbing.css">
+    <link rel="stylesheet" href="/app/studio-lipsync.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script src="/app/studio-mode-tabs.js" defer></script>
+    <script src="/app/elevenlabs-dubbing.js" defer></script>
+    <script src="/app/studio-lipsync.js" defer></script>
+  </body>
+</html>

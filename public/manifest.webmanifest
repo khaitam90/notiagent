@@ -1,0 +1,26 @@
+{
+  "name": "Nô Tì Agent Super",
+  "short_name": "Nô Tì",
+  "description": "Super Agent AI — Chat, Tools, Studio video",
+  "start_url": "/app/",
+  "scope": "/app/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0f0f10",
+  "theme_color": "#0f0f10",
+  "lang": "vi",
+  "icons": [
+    {
+      "src": "/app/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/app/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

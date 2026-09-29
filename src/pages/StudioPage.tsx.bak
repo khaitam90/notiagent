@@ -1,0 +1,1092 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import {
+  ArrowLeft, Film, Image as ImageIcon, Music, Type, Wand2, Scissors, Layers, Play, Pause,
+  Download, Upload, Trash2, Sparkles, Video, ChevronDown, Maximize2,
+  SkipBack, SkipForward, ZoomIn, ZoomOut, Loader2, Ratio,
+} from 'lucide-react'
+import AiVideoStudio from '../components/AiVideoStudio'
+import AiImageStudio from '../components/AiImageStudio'
+import StudioProjectsPanel from '../components/StudioProjectsPanel'
+import StudioVoicePanel from '../components/studio/StudioVoicePanel'
+import SocialPublishBar from '../components/SocialPublishBar'
+import ResizeHandle from '../components/ResizeHandle'
+import { usePersistedSize } from '../lib/usePersistedSize'
+import { STUDIO_RATIO_PRESETS, ratioCssClass } from '../lib/videoModels'
+import {
+  createNamedProject, findStudioProject, getActiveProjectId,
+  setActiveProjectId, upsertStudioProject, purgeAutoProjects, type StudioProject,
+} from '../lib/studioProjects'
+import { consumeStudioHandoff } from '../lib/studioHandoff'
+import { saveStudioProductFromPreview } from '../lib/studioProductLibrary'
+import {
+  clipDisplayTransforms, clipDisplayVolume, exportStdraftFile, projectToStdraft, stdraftToTimeline,
+} from '../lib/stdraft'
+import { pollRenderJob, submitCloudRender } from '../lib/studioCloud'
+import {
+  AssetItem, TimelineClip, canSplitClip, clipsAtTime, formatTime, splitClipAtPlayhead,
+  totalDuration, uid,
+} from '../lib/timeline'
+
+const TOOLS = [
+  { id: 'media', icon: Film, label: 'Media' },
+  { id: 'text', icon: Type, label: 'Text' },
+  { id: 'audio', icon: Music, label: 'Audio' },
+  { id: 'fx', icon: Wand2, label: 'Effects' },
+  { id: 'cut', icon: Scissors, label: 'Cut' },
+  { id: 'layer', icon: Layers, label: 'Layers' },
+]
+
+const PANEL_TABS = [
+  { id: 'ai', label: 'Video Studio', short: 'Video' },
+  { id: 'image', label: 'Ảnh', short: 'Ảnh' },
+  { id: 'voice', label: 'Giọng nói', short: 'Voice' },
+  { id: 'projects', label: 'Dự án Studio', short: 'Dự án' },
+  { id: 'upload', label: 'Upload', short: 'Upload' },
+  { id: 'templates', label: 'Templates', short: 'Mẫu' },
+]
+
+const PX_PER_SEC = 80
+const TRACK_HEAD_W = 80
+
+export default function StudioPage() {
+  const navigate = useNavigate()
+  const [tool, setTool] = useState('media')
+  const [panelTab, setPanelTab] = useState('ai')
+  const [ratio, setRatio] = useState('9:16')
+  const [duration, setDuration] = useState(5)
+  const [result, setResult] = useState<{
+    taskId?: string
+    message?: string
+    status?: string
+    imageUrl?: string
+    videoUrl?: string
+  } | null>(null)
+  const [playing, setPlaying] = useState(false)
+  const [playhead, setPlayhead] = useState(0)
+  const [scrubbing, setScrubbing] = useState(false)
+  const [zoom, setZoom] = useState(1)
+  const [assets, setAssets] = useState<AssetItem[]>([])
+  const [clips, setClips] = useState<TimelineClip[]>([])
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null)
+  const [rightOpen, setRightOpen] = useState(false)
+  const [ratioOpen, setRatioOpen] = useState(false)
+  const [projectId, setProjectId] = useState<string | null>(null)
+  const [projectName, setProjectName] = useState('Phiên chưa lưu')
+  const [publishTitle, setPublishTitle] = useState('')
+  const [publishCaption, setPublishCaption] = useState('')
+  const [renderBusy, setRenderBusy] = useState(false)
+  const [renderStatus, setRenderStatus] = useState('')
+  const [renderProgress, setRenderProgress] = useState(0)
+  const ratioRef = useRef<HTMLDivElement>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [railW, setRailW] = usePersistedSize('noti.studio.railW', 72, 56, 120)
+  const [panelW, setPanelW] = usePersistedSize('noti.studio.panelW', 320, 260, 560)
+  const [inspectorW, setInspectorW] = usePersistedSize('noti.studio.inspectorW', 240, 180, 420)
+  const [timelineH, setTimelineH] = usePersistedSize('noti.studio.timelineH', 168, 100, 360)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 901px)')
+    const sync = () => setRightOpen(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ratioOpen && ratioRef.current && !ratioRef.current.contains(e.target as Node)) {
+        setRatioOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [ratioOpen])
+
+  const applyProject = useCallback((p: StudioProject) => {
+    setProjectId(p.id)
+    setProjectName(p.name)
+    setRatio(p.ratio)
+    setDuration(p.duration)
+    setClips(p.clips)
+    setAssets(p.assets)
+    setPlayhead(0)
+    setPlaying(false)
+    setSelectedClipId(null)
+    setResult(null)
+  }, [])
+
+  const buildProjectSnapshot = useCallback((): StudioProject | null => {
+    if (!projectId) return null
+    const existing = findStudioProject(projectId)
+    if (!existing?.userCreated) return null
+    return {
+      id: projectId,
+      name: projectName,
+      updatedAt: new Date().toISOString(),
+      ratio,
+      duration,
+      clips,
+      assets,
+      userCreated: true,
+    }
+  }, [projectId, projectName, ratio, duration, clips, assets])
+
+  const saveCurrentProject = useCallback(() => {
+    const snap = buildProjectSnapshot()
+    if (!snap) return null
+    upsertStudioProject(snap)
+    return snap
+  }, [buildProjectSnapshot])
+
+  const openProject = useCallback((p: StudioProject) => {
+    setActiveProjectId(p.id)
+    applyProject(p)
+    setPanelTab('ai')
+  }, [applyProject])
+
+  const newBlankProject = useCallback(() => {
+    const name = window.prompt('Đặt tên dự án mới:', '')
+    if (!name?.trim()) return
+    const p = createNamedProject(name.trim(), ratio, duration)
+    upsertStudioProject(p)
+    setActiveProjectId(p.id)
+    applyProject(p)
+  }, [applyProject, ratio, duration])
+
+  useEffect(() => {
+    purgeAutoProjects()
+    const activeId = getActiveProjectId()
+    if (!activeId) return
+    const p = findStudioProject(activeId)
+    if (p?.userCreated) applyProject(p)
+    else setActiveProjectId(null)
+  }, [applyProject])
+
+  useEffect(() => {
+    const handoff = consumeStudioHandoff()
+    if (!handoff?.url && !handoff?.stdraft) return
+
+    if (handoff.stdraft) {
+      const { clips: imported, assets: importedAssets, ratio: r } = stdraftToTimeline(handoff.stdraft)
+      setRatio(r)
+      setClips(imported)
+      setAssets(importedAssets)
+      const videoSeg = imported.find((c) => c.track === 'video' && c.src)
+      const imageSeg = imported.find((c) => c.type === 'image' && c.src)
+      if (handoff.type === 'video' && videoSeg) {
+        setResult({ videoUrl: videoSeg.src, status: 'ready', message: handoff.name })
+        setPanelTab('ai')
+      } else if (imageSeg || handoff.type === 'image') {
+        setResult({ imageUrl: imageSeg?.src || handoff.url, status: 'ready', message: handoff.name })
+        setPanelTab('image')
+      }
+      return
+    }
+
+    const assetId = uid()
+    const asset: AssetItem = {
+      id: assetId,
+      type: handoff.type === 'video' ? 'video' : 'image',
+      name: handoff.name || 'Studio AI',
+      src: handoff.url,
+      thumbnail: handoff.url,
+    }
+    setAssets((prev) => [asset, ...prev.filter((a) => a.src !== handoff.url)])
+
+    if (handoff.type === 'video') {
+      const clip: TimelineClip = {
+        id: uid(),
+        type: 'video',
+        track: 'video',
+        label: asset.name,
+        src: handoff.url,
+        materialId: `mat_${assetId}`,
+        startSec: 0,
+        durationSec: handoff.durationSec ?? duration,
+        sourceStartSec: 0,
+        transforms: { scale: 1, opacity: 1, position: [0, 0] },
+      }
+      setClips((prev) => [...prev.filter((c) => c.src !== handoff.url), clip])
+      setResult({ videoUrl: handoff.url, status: 'ready', message: handoff.name })
+      setPanelTab('ai')
+    } else {
+      setResult({ imageUrl: handoff.url, status: 'ready', message: handoff.name })
+      setPanelTab('image')
+    }
+  // Chỉ chạy một lần khi mở editor từ Studio AI / Tài sản — không tự tạo dự án
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!projectId) return
+    const existing = findStudioProject(projectId)
+    if (!existing?.userCreated) return
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      const snap = buildProjectSnapshot()
+      if (snap) upsertStudioProject(snap)
+    }, 800)
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
+  }, [projectId, projectName, ratio, duration, clips, assets, buildProjectSnapshot])
+
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const tickRef = useRef<number | null>(null)
+  const timelineScrollRef = useRef<HTMLDivElement>(null)
+  const timelineInnerRef = useRef<HTMLDivElement>(null)
+
+  const timelineDuration = useMemo(() => totalDuration(clips, duration), [clips, duration])
+  const activeVideo = useMemo(() => clipsAtTime(clips, playhead, 'video')[0], [clips, playhead])
+  const pxPerSec = PX_PER_SEC * zoom
+
+  const seekFromClientX = useCallback((clientX: number) => {
+    const inner = timelineInnerRef.current
+    const scroll = timelineScrollRef.current
+    if (!inner) return
+    const rect = inner.getBoundingClientRect()
+    const scrollLeft = scroll?.scrollLeft ?? 0
+    const x = scrollLeft + (clientX - rect.left) - TRACK_HEAD_W
+    const t = x / pxPerSec
+    setPlayhead(Math.max(0, Math.min(t, timelineDuration)))
+  }, [pxPerSec, timelineDuration])
+
+  const beginScrub = useCallback((clientX: number) => {
+    setPlaying(false)
+    setScrubbing(true)
+    seekFromClientX(clientX)
+  }, [seekFromClientX])
+
+  useEffect(() => {
+    if (!scrubbing) return
+    const onMove = (e: PointerEvent) => seekFromClientX(e.clientX)
+    const onUp = () => setScrubbing(false)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [scrubbing, seekFromClientX])
+
+  const addClip = useCallback((asset: AssetItem, track: TimelineClip['track'], dur: number) => {
+    const startSec = track === 'video'
+      ? Math.max(0, ...clips.filter((c) => c.track === 'video').map((c) => c.startSec + c.durationSec), 0)
+      : track === 'audio'
+        ? Math.max(0, ...clips.filter((c) => c.track === 'audio').map((c) => c.startSec + c.durationSec), 0)
+        : 0
+    const clip: TimelineClip = {
+      id: uid(),
+      type: asset.type,
+      track,
+      label: asset.name,
+      src: asset.src,
+      materialId: `mat_${asset.id}`,
+      startSec,
+      durationSec: dur,
+      sourceStartSec: 0,
+      transforms: track === 'video' || track === 'text' ? { scale: 1, opacity: 1, position: [0, 0] } : undefined,
+      volume: track === 'audio' ? 0.8 : undefined,
+    }
+    setClips((prev) => [...prev, clip])
+    setSelectedClipId(clip.id)
+  }, [clips])
+
+  const updateClip = useCallback((id: string, patch: Partial<TimelineClip>) => {
+    setClips((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+  }, [])
+
+  const splitSelectedClip = useCallback(() => {
+    if (!selectedClipId) return
+    setClips((prev) => splitClipAtPlayhead(prev, selectedClipId, playhead))
+  }, [selectedClipId, playhead])
+
+  const importFiles = (files: FileList | null) => {
+    if (!files?.length) return
+    Array.from(files).forEach((file) => {
+      const src = URL.createObjectURL(file)
+      const type: AssetItem['type'] = file.type.startsWith('audio') ? 'audio' : file.type.startsWith('image') ? 'image' : 'video'
+      const asset: AssetItem = { id: uid(), type, name: file.name, src, thumbnail: type === 'image' ? src : undefined }
+      setAssets((prev) => [asset, ...prev])
+      addClip(asset, type === 'audio' ? 'audio' : 'video', type === 'audio' ? 10 : Math.max(3, duration))
+    })
+  }
+
+
+  const removeClip = (id: string) => {
+    setClips((prev) => prev.filter((c) => c.id !== id))
+    if (selectedClipId === id) setSelectedClipId(null)
+  }
+
+  const exportStdraft = () => {
+    const pid = projectId || `proj_${Date.now()}`
+    const draft = projectToStdraft({
+      projectId: pid,
+      name: projectName,
+      ratio,
+      clips,
+      assets,
+    })
+    exportStdraftFile(draft)
+  }
+
+  const exportCloudMp4 = async () => {
+    if (!clips.some((c) => (c.track === 'video' || c.track === 'audio') && c.src)) {
+      setRenderStatus('Cần ít nhất 1 clip video/audio có URL trên timeline')
+      return
+    }
+    const pid = projectId || `proj_${Date.now()}`
+    const draft = projectToStdraft({
+      projectId: pid,
+      name: projectName,
+      ratio,
+      clips,
+      assets,
+    })
+    setRenderBusy(true)
+    setRenderProgress(0)
+    setRenderStatus('Đang gửi hàng đợi render…')
+    try {
+      const queued = await submitCloudRender(draft, projectName)
+      const final = await pollRenderJob(queued.job_id, {
+        onUpdate: (j) => {
+          setRenderProgress(j.progress ?? 0)
+          setRenderStatus(j.message || j.status)
+        },
+      })
+      if (final.status === 'success' && final.output_url) {
+        setRenderStatus('Render cloud xong — đã thêm vào media')
+        const asset: AssetItem = {
+          id: uid(),
+          type: 'video',
+          name: `Cloud ${final.job_id.slice(-6)}`,
+          src: final.output_url,
+        }
+        setAssets((prev) => [asset, ...prev])
+        setResult({ status: 'ready', videoUrl: final.output_url, message: projectName || 'Cloud render' })
+        saveStudioProductFromPreview(
+          { videoUrl: final.output_url, status: 'ready', message: projectName },
+          { source: 'editor', ratio, prompt: 'Cloud render MP4' },
+        )
+      } else {
+        setRenderStatus(final.error || final.message || 'Render thất bại')
+      }
+    } catch (e) {
+      setRenderStatus(e instanceof Error ? e.message : 'Render lỗi')
+    } finally {
+      setRenderBusy(false)
+    }
+  }
+
+  const exportPrimaryMp4 = () => {
+    const videoClip = clips.find((c) => c.track === 'video' && c.src)
+    if (!videoClip?.src) return
+    const a = document.createElement('a')
+    a.href = videoClip.src
+    a.download = `${videoClip.label || 'clip'}.mp4`
+    a.target = '_blank'
+    a.click()
+  }
+
+  const selectedClip = useMemo(
+    () => (selectedClipId ? clips.find((c) => c.id === selectedClipId) : undefined),
+    [clips, selectedClipId],
+  )
+  const canSplit = canSplitClip(selectedClip, playhead)
+
+  useEffect(() => {
+    if (!playing) {
+      if (tickRef.current) cancelAnimationFrame(tickRef.current)
+      return
+    }
+    let last = performance.now()
+    const tick = (now: number) => {
+      const dt = (now - last) / 1000
+      last = now
+      setPlayhead((p) => {
+        const next = p + dt
+        if (next >= timelineDuration) {
+          setPlaying(false)
+          return timelineDuration
+        }
+        return next
+      })
+      tickRef.current = requestAnimationFrame(tick)
+    }
+    tickRef.current = requestAnimationFrame(tick)
+    return () => { if (tickRef.current) cancelAnimationFrame(tickRef.current) }
+  }, [playing, timelineDuration])
+
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el || !activeVideo?.src) return
+    if (el.src !== activeVideo.src) {
+      el.src = activeVideo.src
+    }
+    const offset = Math.max(0, playhead - activeVideo.startSec)
+    if (!playing || scrubbing) {
+      try {
+        if (Math.abs(el.currentTime - offset) > 0.05) el.currentTime = offset
+      } catch {
+        /* ignore seek while loading */
+      }
+    }
+    if (playing && !scrubbing) el.play().catch(() => {})
+    else el.pause()
+  }, [activeVideo, playhead, playing, scrubbing])
+
+  const previewTransformStyle = useMemo(() => {
+    if (!activeVideo) return undefined
+    const t = clipDisplayTransforms(activeVideo)
+    return {
+      transform: `scale(${t.scale}) translate(${t.position?.[0] ?? 0}px, ${t.position?.[1] ?? 0}px)`,
+      opacity: t.opacity,
+    } as const
+  }, [activeVideo])
+  const ratioClass = ratioCssClass(ratio)
+  const ratioPreset = STUDIO_RATIO_PRESETS.find((p) => p.id === ratio) ?? STUDIO_RATIO_PRESETS[0]
+
+  const readyVideoUrl = result?.videoUrl || activeVideo?.src || ''
+
+  const previewContent = () => {
+    if (result?.status === 'error') {
+      return <div className="cc-preview-empty"><span className="cc-preview-error">{result.message}</span></div>
+    }
+    if (result?.videoUrl) {
+      return (
+        <video
+          ref={videoRef}
+          className="cc-preview-media"
+          src={result.videoUrl}
+          controls
+          playsInline
+          style={previewTransformStyle}
+        />
+      )
+    }
+    if (activeVideo?.src) {
+      return (
+        <video
+          ref={videoRef}
+          className="cc-preview-media"
+          playsInline
+          style={previewTransformStyle}
+          muted={!clips.some((c) => c.track === 'audio' && clipsAtTime(clips, playhead, 'audio').includes(c))}
+        />
+      )
+    }
+    if (result?.imageUrl) {
+      return (
+        <img
+          src={result.imageUrl}
+          alt="Generated"
+          className="cc-preview-media"
+          style={previewTransformStyle}
+        />
+      )
+    }
+    if (result?.status === 'pending') {
+      return (
+        <div className="cc-preview-empty">
+          <Loader2 size={32} className="cc-preview-icon spin" />
+          <p>{result.message || 'Đang render AI…'}</p>
+          {result.taskId && <small>Task: {result.taskId}</small>}
+        </div>
+      )
+    }
+    if (result) {
+      return (
+        <div className="cc-preview-empty">
+          <Sparkles size={32} className="cc-preview-icon" />
+          <p>{result.message || 'Đã gửi render AI'}</p>
+          {result.taskId && <small>Task: {result.taskId}</small>}
+        </div>
+      )
+    }
+    return (
+      <div className="cc-preview-empty">
+        <Video size={40} className="cc-preview-icon" />
+        <p>Video Preview</p>
+        <small className="cc-preview-hint">Upload media hoặc tạo clip AI</small>
+      </div>
+    )
+  }
+
+  const renderPanelContent = () => {
+    if (panelTab === 'ai') {
+      return (
+        <AiVideoStudio
+          ratio={ratio}
+          duration={duration}
+          onRatioChange={setRatio}
+          onDurationChange={setDuration}
+          onGenerated={(res) => {
+            setResult(res)
+            saveStudioProductFromPreview(
+              { ...res, status: res.status ?? (res.videoUrl ? 'ready' : undefined) },
+              { source: 'editor', ratio, durationSec: duration, prompt: res.message },
+            )
+            if (res.status === 'ready' && res.message) {
+              setPublishCaption((c) => c || res.message || '')
+            }
+            if (res.imageUrl) {
+              const asset: AssetItem = { id: uid(), type: 'image', name: 'AI Image', src: res.imageUrl, thumbnail: res.imageUrl }
+              setAssets((prev) => [asset, ...prev])
+            }
+            if (res.videoUrl && res.taskId) {
+              const asset: AssetItem = {
+                id: uid(),
+                type: 'video',
+                name: `AI ${res.taskId.slice(0, 8)}`,
+                src: res.videoUrl,
+              }
+              setAssets((prev) => [asset, ...prev])
+              addClip(asset, 'video', duration)
+            } else if (res.taskId && res.status === 'pending') {
+              const asset: AssetItem = { id: uid(), type: 'video', name: `AI ${res.taskId.slice(0, 8)}`, src: '' }
+              setAssets((prev) => [asset, ...prev])
+            }
+          }}
+        />
+      )
+    }
+
+    if (panelTab === 'image') {
+      return (
+        <AiImageStudio
+          ratio={ratio}
+          onGenerated={(res) => {
+            setResult(res)
+            if (res.imageUrl) {
+              saveStudioProductFromPreview(
+                { imageUrl: res.imageUrl, status: 'ready', message: res.message },
+                { source: 'editor', ratio },
+              )
+            }
+            if (res.imageUrl) {
+              const asset: AssetItem = { id: uid(), type: 'image', name: 'AI Image', src: res.imageUrl, thumbnail: res.imageUrl }
+              setAssets((prev) => [asset, ...prev])
+            }
+          }}
+        />
+      )
+    }
+
+    if (panelTab === 'voice') {
+      return (
+        <StudioVoicePanel
+          selectedClip={selectedClip}
+          onTtsReady={({ url, durationSec, label }) => {
+            const asset: AssetItem = { id: uid(), type: 'audio', name: label, src: url }
+            setAssets((prev) => [asset, ...prev])
+            addClip(asset, 'audio', durationSec)
+            setPanelTab('upload')
+          }}
+        />
+      )
+    }
+
+    if (panelTab === 'projects') {
+      return (
+        <StudioProjectsPanel
+          activeProjectId={projectId}
+          projectName={projectName}
+          onOpen={openProject}
+          onSaveCurrent={() => {
+            const defaultName = projectName === 'Phiên chưa lưu' ? '' : projectName
+            const name = window.prompt('Đặt tên dự án để lưu timeline:', defaultName)
+            if (!name?.trim()) return null
+            const p = projectId && findStudioProject(projectId)?.userCreated
+              ? { id: projectId, name: name.trim(), updatedAt: new Date().toISOString(), ratio, duration, clips, assets, userCreated: true as const }
+              : createNamedProject(name.trim(), ratio, duration)
+            const withData: StudioProject = { ...p, clips, assets, name: name.trim(), userCreated: true }
+            upsertStudioProject(withData)
+            setProjectId(withData.id)
+            setProjectName(withData.name)
+            setActiveProjectId(withData.id)
+            return withData
+          }}
+          onNewBlank={newBlankProject}
+        />
+      )
+    }
+
+    if (panelTab === 'templates') {
+      return (
+        <div className="cc-templates">
+          {['TikTok Viral', 'YouTube Intro', 'Cinematic 4K', 'Product Ad'].map((t) => (
+            <button key={t} type="button" className="cc-template-card" onClick={() => setPanelTab('ai')}>
+              <div className="cc-template-thumb" />
+              <span>{t}</span>
+            </button>
+          ))}
+        </div>
+      )
+    }
+
+    return (
+      <>
+        <button type="button" className="cc-upload-zone" onClick={() => fileRef.current?.click()}>
+          <Upload size={24} />
+          <span>Kéo thả hoặc click để upload</span>
+          <small>Video · Audio · Ảnh</small>
+        </button>
+        <div className="cc-asset-grid">
+          {assets.length === 0 && (
+            <p className="cc-empty">Chưa có media — upload hoặc tạo AI</p>
+          )}
+          {assets.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="cc-asset-item"
+              onClick={() => addClip(a, a.type === 'audio' ? 'audio' : 'video', a.type === 'image' ? 3 : duration)}
+              title="Thêm vào timeline"
+            >
+              {a.thumbnail ? (
+                <img src={a.thumbnail} alt="" />
+              ) : (
+                <div className="cc-asset-placeholder">
+                  {a.type === 'audio' ? <Music size={18} /> : a.type === 'image' ? <ImageIcon size={18} /> : <Film size={18} />}
+                </div>
+              )}
+              <span>{a.name.slice(0, 14)}</span>
+            </button>
+          ))}
+        </div>
+      </>
+    )
+  }
+
+  return (
+    <div className="cc-studio">
+      <input ref={fileRef} type="file" accept="video/*,audio/*,image/*" multiple hidden onChange={(e) => importFiles(e.target.files)} />
+
+      {/* Top bar — CapCut style */}
+      <header className="cc-topbar">
+        <div className="cc-topbar-left">
+          <button type="button" className="cc-mobile-back" onClick={() => navigate('/studio')} aria-label="Trở về Studio">
+            <ArrowLeft size={18} />
+            <span>Studio</span>
+          </button>
+          <div className="cc-logo">
+            <span className="cc-logo-icon">C</span>
+            <span className="cc-logo-text">Studio</span>
+          </div>
+          <span className="cc-project-name" title={projectId ? 'Dự án đã lưu' : 'Chưa lưu — vào tab Dự án'}>
+            {projectName}
+            {!projectId && <small className="cc-project-unsaved"> · chưa lưu</small>}
+          </span>
+        </div>
+        <div className="cc-topbar-center">
+          <div className="cc-ratio-dropdown" ref={ratioRef}>
+            <button
+              type="button"
+              className={`cc-ratio-trigger${ratioOpen ? ' open' : ''}`}
+              onClick={() => setRatioOpen((o) => !o)}
+              aria-label="Tỷ lệ khung hình"
+            >
+              <Ratio size={15} />
+              <span>{ratioPreset.label}</span>
+              <ChevronDown size={14} />
+            </button>
+            {ratioOpen && (
+              <div className="cc-ratio-menu">
+                <div className="cc-ratio-menu-head">Tỷ lệ khung hình</div>
+                {STUDIO_RATIO_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`cc-ratio-opt${ratio === p.id ? ' active' : ''}`}
+                    onClick={() => { setRatio(p.id); setRatioOpen(false) }}
+                  >
+                    <span className="cc-ratio-opt-label">{p.label}</span>
+                    <span className="cc-ratio-opt-hint">{p.hint}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="cc-topbar-right">
+          <button type="button" className="cc-btn-ghost cc-btn-icon-only" onClick={() => fileRef.current?.click()} aria-label="Import">
+            <Upload size={18} />
+            <span className="cc-btn-label">Import</span>
+          </button>
+          {clips.some((c) => c.track === 'video' && c.src) && (
+            <button type="button" className="cc-btn-ghost cc-btn-icon-only" onClick={exportPrimaryMp4} aria-label="Tải MP4">
+              <Film size={18} />
+              <span className="cc-btn-label">MP4</span>
+            </button>
+          )}
+          {clips.some((c) => (c.track === 'video' || c.track === 'audio') && c.src) && (
+            <button
+              type="button"
+              className="cc-btn-ghost cc-btn-icon-only"
+              onClick={exportCloudMp4}
+              disabled={renderBusy}
+              aria-label="Render cloud MP4"
+            >
+              {renderBusy ? <Loader2 size={18} className="spin" /> : <Sparkles size={18} />}
+              <span className="cc-btn-label">Cloud</span>
+            </button>
+          )}
+          <button type="button" className="cc-btn-export" onClick={exportStdraft}>
+            <Download size={16} />
+            <span className="cc-btn-label">Export</span>
+          </button>
+        </div>
+      </header>
+
+      {(renderBusy || renderStatus) && (
+        <div className="cc-render-banner" role="status">
+          {renderBusy && <Loader2 size={14} className="spin" />}
+          <span>{renderStatus}</span>
+          {renderBusy && renderProgress > 0 && <span className="cc-render-pct">{renderProgress}%</span>}
+          {!renderBusy && renderStatus && (
+            <button type="button" className="cc-render-dismiss" onClick={() => setRenderStatus('')}>×</button>
+          )}
+        </div>
+      )}
+
+      <div className="cc-studio-body">
+      <div className="cc-workspace">
+        {/* Left tool rail */}
+        <nav className="cc-rail" style={{ width: railW }}>
+          {TOOLS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`cc-rail-btn${tool === t.id ? ' active' : ''}`}
+              onClick={() => setTool(t.id)}
+            >
+              <t.icon size={22} strokeWidth={1.5} />
+              <span>{t.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        <ResizeHandle axis="x" onDelta={(d) => setRailW((w) => w + d)} />
+
+        {/* Left resource panel */}
+        <aside
+          className="cc-panel"
+          style={{ width: panelW }}
+        >
+          <div className="cc-panel-tabs">
+            {PANEL_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`cc-panel-tab${panelTab === tab.id ? ' active' : ''}`}
+                onClick={() => setPanelTab(tab.id)}
+              >
+                <span className="cc-tab-long">{tab.label}</span>
+                <span className="cc-tab-short">{tab.short}</span>
+              </button>
+            ))}
+          </div>
+          <div className="cc-panel-body">{renderPanelContent()}</div>
+        </aside>
+
+        <ResizeHandle axis="x" onDelta={(d) => setPanelW((w) => w + d)} />
+
+        {/* Center preview + inspector */}
+        <div className="cc-center-col">
+        <main className="cc-canvas">
+          <div className="cc-canvas-inner">
+            <div className={`cc-preview-frame ${ratioClass}`}>
+              {previewContent()}
+            </div>
+            {readyVideoUrl && result?.status === 'ready' && (
+              <SocialPublishBar
+                videoUrl={readyVideoUrl}
+                defaultTitle={publishTitle || projectName}
+                defaultCaption={publishCaption}
+              />
+            )}
+          </div>
+          <div className="cc-transport">
+            <button type="button" className="cc-transport-btn" onClick={() => setPlayhead(0)}>
+              <SkipBack size={16} />
+            </button>
+            <button
+              type="button"
+              className="cc-transport-play"
+              onClick={() => { if (playhead >= timelineDuration) setPlayhead(0); setPlaying(!playing) }}
+            >
+              {playing ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
+            </button>
+            <button type="button" className="cc-transport-btn" onClick={() => setPlayhead(timelineDuration)}>
+              <SkipForward size={16} />
+            </button>
+            <div className="cc-timecode">{formatTime(playhead)} / {formatTime(timelineDuration)}</div>
+            <div className="cc-transport-spacer" />
+            <button type="button" className="cc-transport-btn" title="Fit">
+              <Maximize2 size={16} />
+            </button>
+          </div>
+        </main>
+
+        {rightOpen && (
+          <>
+            <ResizeHandle axis="x" onDelta={(d) => setInspectorW((w) => w + d)} />
+            <aside className="cc-inspector" style={{ width: inspectorW }}>
+            <div className="cc-inspector-header">
+              <span>Properties</span>
+              <button type="button" className="cc-inspector-close" onClick={() => setRightOpen(false)}>×</button>
+            </div>
+            <div className="cc-inspector-body">
+              {selectedClip ? (
+                <>
+                  <div className="cc-field">
+                    <label>Clip</label>
+                    <input
+                      className="cc-input"
+                      value={selectedClip.label}
+                      onChange={(e) => updateClip(selectedClip.id, { label: e.target.value })}
+                    />
+                  </div>
+                  <div className="cc-field-row">
+                    <div className="cc-field">
+                      <label>Start</label>
+                      <input className="cc-input" readOnly value={`${selectedClip.startSec.toFixed(2)}s`} />
+                    </div>
+                    <div className="cc-field">
+                      <label>Duration</label>
+                      <input
+                        className="cc-input"
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={selectedClip.durationSec}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value)
+                          if (Number.isFinite(v) && v > 0) updateClip(selectedClip.id, { durationSec: v })
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="cc-field">
+                    <label>Track</label>
+                    <input className="cc-input" readOnly value={selectedClip.track} />
+                  </div>
+
+                  {(selectedClip.track === 'video' || selectedClip.track === 'text') && (
+                    <>
+                      <div className="cc-field">
+                        <label>Scale — {clipDisplayTransforms(selectedClip).scale.toFixed(2)}</label>
+                        <input
+                          type="range"
+                          className="cc-range"
+                          min={0.1}
+                          max={2}
+                          step={0.05}
+                          value={clipDisplayTransforms(selectedClip).scale}
+                          onChange={(e) => {
+                            const scale = parseFloat(e.target.value)
+                            const prev = clipDisplayTransforms(selectedClip)
+                            updateClip(selectedClip.id, {
+                              transforms: { ...prev, scale, position: prev.position ?? [0, 0] },
+                            })
+                          }}
+                        />
+                      </div>
+                      <div className="cc-field">
+                        <label>Opacity — {Math.round(clipDisplayTransforms(selectedClip).opacity * 100)}%</label>
+                        <input
+                          type="range"
+                          className="cc-range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={clipDisplayTransforms(selectedClip).opacity}
+                          onChange={(e) => {
+                            const opacity = parseFloat(e.target.value)
+                            const prev = clipDisplayTransforms(selectedClip)
+                            updateClip(selectedClip.id, {
+                              transforms: { ...prev, opacity, position: prev.position ?? [0, 0] },
+                            })
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedClip.track === 'audio' && (
+                    <div className="cc-field">
+                      <label>Volume — {Math.round(clipDisplayVolume(selectedClip) * 100)}%</label>
+                      <input
+                        type="range"
+                        className="cc-range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={clipDisplayVolume(selectedClip)}
+                        onChange={(e) => updateClip(selectedClip.id, { volume: parseFloat(e.target.value) })}
+                      />
+                    </div>
+                  )}
+
+                  {selectedClip.track === 'text' && (
+                    <>
+                      <div className="cc-field">
+                        <label>Font size</label>
+                        <input
+                          className="cc-input"
+                          type="number"
+                          min={12}
+                          max={120}
+                          value={selectedClip.fontSize ?? 32}
+                          onChange={(e) => updateClip(selectedClip.id, { fontSize: parseInt(e.target.value, 10) || 32 })}
+                        />
+                      </div>
+                      <div className="cc-field">
+                        <label>Màu chữ</label>
+                        <input
+                          className="cc-input cc-color"
+                          type="color"
+                          value={selectedClip.color ?? '#ffffff'}
+                          onChange={(e) => updateClip(selectedClip.id, { color: e.target.value })}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {canSplit && (
+                    <button type="button" className="cc-btn-secondary" onClick={splitSelectedClip}>
+                      <Scissors size={14} /> Cắt tại playhead ({formatTime(playhead)})
+                    </button>
+                  )}
+
+                  <button type="button" className="cc-btn-danger" onClick={() => removeClip(selectedClip.id)}>
+                    <Trash2 size={14} /> Xóa clip
+                  </button>
+                </>
+              ) : (
+                <div className="cc-inspector-empty">
+                  <Layers size={28} />
+                  <p>Chọn clip trên timeline để chỉnh thuộc tính</p>
+                </div>
+              )}
+            </div>
+          </aside>
+          </>
+        )}
+        {!rightOpen && (
+          <button type="button" className="cc-inspector-toggle" onClick={() => setRightOpen(true)}>
+            <ChevronDown size={16} style={{ transform: 'rotate(-90deg)' }} />
+          </button>
+        )}
+        </div>
+      </div>
+
+      <ResizeHandle axis="y" onDelta={(d) => setTimelineH((h) => h + d)} className="resize-handle-timeline" />
+
+      {/* Timeline — CapCut style */}
+      <footer className="cc-timeline" style={{ height: timelineH }}>
+        <div className="cc-timeline-toolbar">
+          <button
+            type="button"
+            className="cc-tl-play"
+            onClick={() => { if (playhead >= timelineDuration) setPlayhead(0); setPlaying(!playing) }}
+          >
+            {playing ? <Pause size={14} /> : <Play size={14} fill="currentColor" />}
+          </button>
+          <span className="cc-tl-time">{formatTime(playhead)}</span>
+          <button
+            type="button"
+            className={`cc-tl-btn${canSplit ? ' active' : ''}`}
+            disabled={!canSplit}
+            onClick={splitSelectedClip}
+            title="Cắt clip tại playhead (chọn clip trước)"
+          >
+            <Scissors size={14} />
+          </button>
+          <div className="cc-tl-spacer" />
+          <button type="button" className="cc-tl-btn" onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))} title="Zoom out">
+            <ZoomOut size={14} />
+          </button>
+          <span className="cc-tl-zoom">{Math.round(zoom * 100)}%</span>
+          <button type="button" className="cc-tl-btn" onClick={() => setZoom((z) => Math.min(2, z + 0.25))} title="Zoom in">
+            <ZoomIn size={14} />
+          </button>
+        </div>
+        <div className="cc-timeline-scroll" ref={timelineScrollRef}>
+          <div
+            ref={timelineInnerRef}
+            className={`cc-timeline-inner${scrubbing ? ' scrubbing' : ''}`}
+            style={{ minWidth: timelineDuration * pxPerSec + TRACK_HEAD_W + 60 }}
+          >
+            <div
+              className="cc-ruler"
+              onPointerDown={(e) => {
+                if (e.button !== 0) return
+                e.preventDefault()
+                beginScrub(e.clientX)
+              }}
+            >
+              {Array.from({ length: Math.ceil(timelineDuration) + 1 }, (_, i) => (
+                <span key={i} className="cc-ruler-mark" style={{ left: TRACK_HEAD_W + i * pxPerSec }}>{formatTime(i)}</span>
+              ))}
+            </div>
+            {(['video', 'audio', 'text'] as const).map((track) => (
+              <div key={track} className="cc-track">
+                <div className="cc-track-head">
+                  {track === 'video' ? <Film size={14} /> : track === 'audio' ? <Music size={14} /> : <Type size={14} />}
+                  <span>{track.charAt(0).toUpperCase() + track.slice(1)}</span>
+                </div>
+                <div
+                  className="cc-track-lane"
+                  onPointerDown={(e) => {
+                    if (e.button !== 0) return
+                    if ((e.target as HTMLElement).closest('.cc-clip')) return
+                    e.preventDefault()
+                    beginScrub(e.clientX)
+                  }}
+                >
+                  {clips.filter((c) => c.track === track).map((clip) => (
+                    <div
+                      key={clip.id}
+                      className={`cc-clip cc-clip-${track}${selectedClipId === clip.id ? ' selected' : ''}`}
+                      style={{ left: clip.startSec * pxPerSec, width: Math.max(clip.durationSec * pxPerSec, 48) }}
+                      onClick={() => setSelectedClipId(clip.id)}
+                      title={clip.label}
+                    >
+                      <span>{clip.label.slice(0, 16)}</span>
+                      <button type="button" className="cc-clip-del" onClick={(e) => { e.stopPropagation(); removeClip(clip.id) }}>
+                        <Trash2 size={10} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div
+              className="cc-playhead"
+              style={{ left: TRACK_HEAD_W + playhead * pxPerSec }}
+              role="slider"
+              aria-label="Vị trí phát"
+              aria-valuemin={0}
+              aria-valuemax={timelineDuration}
+              aria-valuenow={playhead}
+            >
+              <button
+                type="button"
+                className="cc-playhead-handle"
+                onPointerDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  beginScrub(e.clientX)
+                }}
+                aria-label="Kéo để tua"
+              />
+            </div>
+          </div>
+        </div>
+      </footer>
+      </div>
+    </div>
+  )
+}

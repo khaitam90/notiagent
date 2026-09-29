@@ -1,0 +1,256 @@
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Edit2, Film, Image as ImageIcon, Loader2, Send, Upload } from 'lucide-react'
+import {
+  findStudioProject,
+  setActiveProjectId,
+  upsertStudioProject,
+} from '../../lib/studioProjects'
+import { saveStudioProductFromPreview } from '../../lib/studioProductLibrary'
+import { createImage, createVideo, pollVideoTask, uploadMedia } from '../../lib/api'
+import { registerStudioUpload } from '../../lib/studioAssetLibrary'
+import StudioProductLibrary from './StudioProductLibrary'
+import StudioUploadedLibrary from './StudioUploadedLibrary'
+
+type Tab = 'studio' | 'products' | 'uploads'
+
+function parseTab(raw: string | null): Tab {
+  if (raw === 'products' || raw === 'uploads') return raw
+  return 'studio'
+}
+
+type Props = {
+  projectId: string
+}
+
+/** Không gian làm việc của 1 dự án — Studio tạo nhanh (ảnh/video) + Sản phẩm + Đã tải lên, đều lọc theo projectId. */
+export default function ProjectWorkspace({ projectId }: Props) {
+  const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
+  const tab = parseTab(params.get('tab'))
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const project = useMemo(() => findStudioProject(projectId), [projectId])
+
+  const [prompt, setPrompt] = useState('')
+  const [mode, setMode] = useState<'image' | 'video'>('image')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
+  const [refFile, setRefFile] = useState<File | null>(null)
+
+  const setTab = useCallback((next: Tab) => {
+    setParams((p) => {
+      const q = new URLSearchParams(p)
+      q.set('tab', next)
+      return q
+    }, { replace: true })
+  }, [setParams])
+
+  const backToGallery = () => {
+    setActiveProjectId(null)
+    setParams((p) => {
+      const q = new URLSearchParams(p)
+      q.delete('project')
+      q.set('section', 'projects')
+      return q
+    }, { replace: true })
+  }
+
+  const rename = () => {
+    if (!project) return
+    const name = window.prompt('Đổi tên dự án', project.name)
+    if (!name?.trim()) return
+    upsertStudioProject({ ...project, name: name.trim(), updatedAt: new Date().toISOString() })
+    navigate(0)
+  }
+
+  const pickRefFile = () => fileRef.current?.click()
+
+  const onRefFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (f) setRefFile(f)
+    e.target.value = ''
+  }
+
+  const generate = async () => {
+    const text = prompt.trim()
+    if (!text) return
+    setBusy(true)
+    setStatus(mode === 'image' ? 'Đang tạo ảnh…' : 'Đang gửi render video…')
+    try {
+      if (mode === 'image') {
+        let imageUrl: string | undefined
+        if (refFile) {
+          const up = await uploadMedia(refFile, 'image')
+          imageUrl = up.url
+        }
+        const res = await createImage({ prompt: text, provider: 'fal', image_url: imageUrl })
+        const url = res.url || res.image_url || res.imageUrl
+        if (!url) throw new Error('API không trả URL ảnh')
+        saveStudioProductFromPreview(
+          { imageUrl: url, status: 'ready', message: text },
+          { source: 'pro', prompt: text, projectId },
+        )
+        setStatus('✅ Ảnh đã lưu vào Sản phẩm của dự án.')
+      } else {
+        let imageUrl: string | undefined
+        if (refFile) {
+          const up = await uploadMedia(refFile, 'image')
+          imageUrl = up.url
+        }
+        const res = await createVideo({ prompt: text, image_url: imageUrl, quality: '720p' })
+        if (!res.taskId) throw new Error(res.message || 'Không nhận được taskId')
+        setStatus(`⏳ Đã gửi render — Task ${String(res.taskId).slice(0, 12)}…`)
+        const st = await pollVideoTask(res.taskId)
+        if (st.state === 'success' && st.videoUrl) {
+          saveStudioProductFromPreview(
+            { videoUrl: st.videoUrl, status: 'ready', taskId: res.taskId, message: text },
+            { source: 'pro', prompt: text, projectId },
+          )
+          setStatus('✅ Video đã lưu vào Sản phẩm của dự án.')
+        } else {
+          setStatus(st.failMsg || 'Render chưa xong — vào tab Sản phẩm kiểm tra lại sau.')
+        }
+      }
+      setPrompt('')
+      setRefFile(null)
+    } catch (e) {
+      setStatus(`⚠️ ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const uploadRefToProject = async (file: File) => {
+    setBusy(true)
+    try {
+      const up = await uploadMedia(file, file.type.startsWith('video') ? 'video' : 'image')
+      registerStudioUpload({
+        kind: file.type.startsWith('video') ? 'video' : 'image',
+        name: file.name,
+        url: up.url,
+        projectId,
+      })
+      setStatus('✅ Đã thêm vào「Đã tải lên」của dự án.')
+    } catch (e) {
+      setStatus(`⚠️ ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="pw-root">
+      <header className="pw-header">
+        <button type="button" className="pw-back" onClick={backToGallery} aria-label="Về danh sách dự án">
+          <ArrowLeft size={18} />
+        </button>
+        <div className="pw-title">
+          <h1>{project?.name || 'Dự án'}</h1>
+          <p>Không gian riêng — Studio, Sản phẩm và Đã tải lên chỉ trong dự án này</p>
+        </div>
+        <button type="button" className="pw-rename" onClick={rename} title="Đổi tên dự án">
+          <Edit2 size={16} />
+        </button>
+      </header>
+
+      <nav className="pw-tabs" aria-label="Tab dự án">
+        <button type="button" className={`pw-tab${tab === 'studio' ? ' active' : ''}`} onClick={() => setTab('studio')}>
+          Studio
+        </button>
+        <button type="button" className={`pw-tab${tab === 'products' ? ' active' : ''}`} onClick={() => setTab('products')}>
+          Sản phẩm
+        </button>
+        <button type="button" className={`pw-tab${tab === 'uploads' ? ' active' : ''}`} onClick={() => setTab('uploads')}>
+          Đã tải lên
+        </button>
+      </nav>
+
+      <div className="pw-body">
+      {tab === 'studio' && (
+        <div className="pw-studio">
+          <div className="pw-mode-switch">
+            <button
+              type="button"
+              className={`pw-mode-btn${mode === 'image' ? ' active' : ''}`}
+              onClick={() => setMode('image')}
+            >
+              <ImageIcon size={16} /> Ảnh
+            </button>
+            <button
+              type="button"
+              className={`pw-mode-btn${mode === 'video' ? ' active' : ''}`}
+              onClick={() => setMode('video')}
+            >
+              <Film size={16} /> Video
+            </button>
+          </div>
+
+          <div className="pw-ref-row">
+            <input ref={fileRef} type="file" accept="image/*" hidden onChange={onRefFileChange} />
+            <button type="button" className="pw-ref-btn" onClick={pickRefFile}>
+              <Upload size={14} />
+              {refFile ? refFile.name.slice(0, 24) : 'Ảnh tham chiếu (tuỳ chọn)'}
+            </button>
+            {refFile && (
+              <button type="button" className="pw-ref-clear" onClick={() => setRefFile(null)}>Bỏ</button>
+            )}
+          </div>
+
+          <div className="pw-prompt-row">
+            <textarea
+              className="pw-prompt-input"
+              placeholder={mode === 'image' ? 'Mô tả ảnh muốn tạo…' : 'Mô tả video muốn tạo…'}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={3}
+            />
+            <button type="button" className="pw-send" disabled={busy || !prompt.trim()} onClick={() => void generate()}>
+              {busy ? <Loader2 size={16} className="spin" /> : <Send size={16} />}
+            </button>
+          </div>
+
+          {status && <p className="pw-status">{status}</p>}
+
+          <div className="pw-upload-hint">
+            <label className="pw-upload-drop">
+              <input
+                type="file"
+                accept="image/*,video/*"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) void uploadRefToProject(f)
+                  e.target.value = ''
+                }}
+              />
+              <Upload size={16} /> Tải file lên thẳng dự án này (không qua Studio AI)
+            </label>
+          </div>
+        </div>
+      )}
+
+      {tab === 'products' && (
+        <div className="pw-panel">
+          <StudioProductLibrary
+            projectId={projectId}
+            title="Sản phẩm"
+            subtitle="Ảnh/video AI đã tạo trong dự án này"
+            showProjectBadge={false}
+          />
+        </div>
+      )}
+
+      {tab === 'uploads' && (
+        <div className="pw-panel">
+          <StudioUploadedLibrary
+            projectId={projectId}
+            title="Đã tải lên"
+            subtitle="File bạn upload thủ công trong dự án này"
+          />
+        </div>
+      )}
+      </div>
+    </div>
+  )
+}

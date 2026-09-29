@@ -1,0 +1,54 @@
+name: notiagent-local
+
+services:
+  api:
+    build: ./api
+    ports:
+      - "127.0.0.1:${NOTIAGENT_API_PORT:-8780}:8780"
+    environment:
+      NOTIAGENT_DATA_DIR: /data
+      ATLASCLOUD_API_KEY: ${ATLASCLOUD_API_KEY:-}
+      CRAZYROUTER_API_KEY: ${CRAZYROUTER_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      REPLICATE_API_TOKEN: ${REPLICATE_API_TOKEN:-}
+    volumes:
+      - "${NOTIAGENT_DATA_ROOT:-D:/NotiAgentData}:/data"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8780/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    ports:
+      - "127.0.0.1:${NOTIAGENT_WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/app/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:2.40.7
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PROTOCOL: http
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: Asia/Ho_Chi_Minh
+    volumes:
+      - "${NOTIAGENT_DATA_ROOT:-D:/NotiAgentData}/n8n:/home/node/.n8n"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5678/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
