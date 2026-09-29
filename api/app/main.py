@@ -646,6 +646,47 @@ def media(filename: str) -> FileResponse:
     return FileResponse(target)
 
 
+@app.get("/api/download")
+def download(url: str, filename: str = "notiagent-download") -> Any:
+    # "Tai san pham ve" - frontend goi endpoint nay (studioMediaDownloadUrl) de ep trinh duyet
+    # tai xuong dung ten file, ke ca khi asset that su nam o CDN provider ngoai (tranh CORS/loi
+    # thieu Content-Disposition tu server ngoai). Truoc day endpoint nay khong ton tai -> nut
+    # Tai xuong tren UI se loi.
+    safe_name = Path(filename).name.replace("/", "_").replace("\\", "_") or "notiagent-download"
+
+    if url.startswith("/api/media/"):
+        target = UPLOAD_DIR / Path(url).name
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="Không tìm thấy tệp")
+        return FileResponse(target, filename=safe_name)
+
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="URL không hợp lệ")
+
+    try:
+        with httpx.stream("GET", url, timeout=60, follow_redirects=True) as upstream:
+            upstream.raise_for_status()
+            content_type = upstream.headers.get("content-type", "application/octet-stream")
+            chunks: list[bytes] = []
+            size = 0
+            for chunk in upstream.iter_bytes():
+                size += len(chunk)
+                if size > 500 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="Tệp vượt giới hạn 500 MB")
+                chunks.append(chunk)
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(status_code=502, detail=provider_error_detail("Không tải được tệp gốc", error)) from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"Không kết nối được nguồn tệp: {error}") from error
+
+    from fastapi.responses import Response as RawResponse
+    return RawResponse(
+        content=b"".join(chunks),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
+
+
 @app.get("/api/providers")
 def providers() -> dict[str, Any]:
     atlas_configured = bool(os.getenv("ATLASCLOUD_API_KEY", "").strip())

@@ -227,6 +227,21 @@ class ApiSmokeTests(unittest.TestCase):
         finally:
             del os.environ["CRAZYROUTER_API_KEY"]
 
+    def test_download_local_media_forces_attachment_filename(self):
+        from app.main import UPLOAD_DIR
+
+        (UPLOAD_DIR / "sample-download.mp4").write_bytes(b"fake-video-bytes")
+        response = self.client.get(
+            "/api/download", params={"url": "/api/media/sample-download.mp4", "filename": "video-cua-toi.mp4"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('filename="video-cua-toi.mp4"', response.headers["content-disposition"])
+        self.assertEqual(response.content, b"fake-video-bytes")
+
+    def test_download_rejects_non_http_url(self):
+        response = self.client.get("/api/download", params={"url": "file:///etc/passwd", "filename": "x"})
+        self.assertEqual(response.status_code, 400)
+
     def test_provider_error_detail_extracts_json_message(self):
         from app.main import provider_error_detail
 
