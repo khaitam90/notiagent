@@ -1135,21 +1135,36 @@ def together_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-def save_b64_image(b64_data: str) -> str:
-    import base64
-    filename = f"{secrets.token_hex(12)}.png"
-    (UPLOAD_DIR / filename).write_bytes(base64.b64decode(b64_data))
+def save_image_bytes(data: bytes) -> str:
+    extension = "jpg" if data[:3] == bytes([0xFF, 0xD8, 0xFF]) else "png"
+    filename = f"{secrets.token_hex(12)}.{extension}"
+    (UPLOAD_DIR / filename).write_bytes(data)
     return media_url(filename)
 
 
-def extract_image_urls(items: list[dict[str, Any]]) -> list[str]:
+def save_b64_image(b64_data: str) -> str:
+    import base64
+    return save_image_bytes(base64.b64decode(b64_data))
+
+
+def extract_image_urls(items: list[dict[str, Any]], localize: bool = False) -> list[str]:
+    # localize=True: link anh cua provider (vd Together `shrt`) la link tam, se het han - tai ve
+    # luu vao UPLOAD_DIR de giu lau dai; loi tai ve thi van tra link goc (khong mat ket qua).
     urls: list[str] = []
     for item in items:
         b64 = item.get("b64_json")
         if b64:
             urls.append(save_b64_image(b64))
         elif item.get("url"):
-            urls.append(str(item["url"]))
+            remote = str(item["url"])
+            if localize:
+                try:
+                    downloaded = httpx.get(remote, timeout=60, follow_redirects=True)
+                    downloaded.raise_for_status()
+                    remote = save_image_bytes(downloaded.content)
+                except httpx.HTTPError:
+                    pass
+            urls.append(remote)
     return urls
 
 
@@ -1181,6 +1196,7 @@ def create_image(body: ImageCreate) -> dict[str, Any]:
             "height": together_height,
             "steps": 4,
             "n": body.num_images,
+            "response_format": "base64",
         }
         try:
             response = post_with_retry(TOGETHER_IMAGE_URL, headers=together_headers(), json_body=payload, timeout=60)
@@ -1189,7 +1205,7 @@ def create_image(body: ImageCreate) -> dict[str, Any]:
             raise HTTPException(status_code=502, detail=provider_error_detail("Together.ai từ chối yêu cầu", error)) from error
         except httpx.HTTPError as error:
             raise HTTPException(status_code=502, detail=f"Không kết nối được Together.ai: {error}") from error
-        urls = extract_image_urls(response.json().get("data") or [])
+        urls = extract_image_urls(response.json().get("data") or [], localize=True)
         if not urls:
             raise HTTPException(status_code=502, detail="Together.ai không trả về ảnh hợp lệ")
         return {"ok": True, "url": urls[0], "imageUrl": urls[0], "imageUrls": urls, "provider": "together"}

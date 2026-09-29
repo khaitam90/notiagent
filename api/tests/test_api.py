@@ -195,6 +195,23 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertLessEqual(width * height, 4_194_304 * 1.01)
         self.assertEqual(self.client.post("/api/image", json={"prompt": "x", "provider": "mock", "width": 4096, "height": 2304}).status_code, 201)
 
+    def test_extract_image_urls_saves_base64_and_localizes_remote(self):
+        import base64
+        from unittest import mock
+
+        from app.main import extract_image_urls
+
+        png = base64.b64encode(bytes([0x89]) + b"PNG-fake").decode()
+        local = extract_image_urls([{"b64_json": png}])
+        self.assertTrue(local[0].startswith("/api-proxy/api/media/") and local[0].endswith(".png"))
+
+        remote = "https://example.test/tmp.jpg"
+        self.assertEqual(extract_image_urls([{"url": remote}]), [remote])  # mac dinh giu link goc
+        fake = mock.Mock(content=bytes([0xFF, 0xD8, 0xFF]) + b"-fake", raise_for_status=lambda: None)
+        with mock.patch("app.main.httpx.get", return_value=fake):
+            saved = extract_image_urls([{"url": remote}], localize=True)
+        self.assertTrue(saved[0].endswith(".jpg") and saved[0].startswith("/api-proxy/api/media/"))
+
     def test_recover_interrupted_runs_marks_stuck_as_failed(self):
         from app.main import db, recover_interrupted_runs
 
