@@ -1,8 +1,11 @@
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 
@@ -111,6 +114,127 @@ class ApiSmokeTests(unittest.TestCase):
 
         missing = self.client.get("/api/video/status?taskId=mock:doesnotexist")
         self.assertEqual(missing.status_code, 404)
+
+    def test_workflow_folders_crud_and_system_protection(self):
+        created = self.client.post("/api/workflow-folders", json={"name": "Chien dich A"})
+        self.assertEqual(created.status_code, 201)
+        folder = created.json()
+        self.assertFalse(folder["system"])
+
+        renamed = self.client.patch(f"/api/workflow-folders/{folder['id']}", json={"name": "Chien dich B"})
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed.json()["name"], "Chien dich B")
+
+        bootstrap = self.client.get("/api/workflows/bootstrap").json()
+        system_ids = {f["id"] for f in bootstrap["folders"] if f["system"]}
+        self.assertEqual(system_ids, {"templates", "personal", "sandbox"})
+
+        # khong the sua/xoa thu muc he thong, du goi truc tiep API
+        self.assertEqual(self.client.patch("/api/workflow-folders/personal", json={"name": "hack"}).status_code, 400)
+        self.assertEqual(self.client.delete("/api/workflow-folders/templates").status_code, 400)
+
+        deleted = self.client.delete(f"/api/workflow-folders/{folder['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/workflow-folders/{folder['id']}").status_code, 404)
+
+    def test_clone_workflow_creates_editable_copy(self):
+        created = self.client.post("/api/workflows", json={"name": "Goc", "folderId": "personal"})
+        workflow_id = created.json()["id"]
+        self.client.patch(
+            f"/api/workflows/{workflow_id}",
+            json={"nodes": [{"id": "p1", "type": "prompt", "config": {}}], "edges": []},
+        )
+
+        cloned = self.client.post(f"/api/workflows/{workflow_id}/clone", json={"folderId": "personal"})
+        self.assertEqual(cloned.status_code, 201)
+        clone = cloned.json()
+        self.assertNotEqual(clone["id"], workflow_id)
+        self.assertEqual(clone["category"], "custom")
+        self.assertEqual(len(clone["nodes"]), 1)
+
+        missing = self.client.post("/api/workflows/khong-ton-tai/clone", json={"folderId": "personal"})
+        self.assertEqual(missing.status_code, 404)
+
+    def test_recover_interrupted_runs_marks_stuck_as_failed(self):
+        from app.main import db, recover_interrupted_runs
+
+        stuck_payload = {
+            "id": "stuck-run-1", "workflowId": "wf-1", "workflowName": "Test", "media": "video",
+            "status": "running", "message": "Đang chạy...", "inputs": {}, "outputs": {"trace": [], "state": {}},
+            "assetUrls": [], "error": None, "createdAt": "2020-01-01T00:00:00+00:00",
+            "updatedAt": "2020-01-01T00:00:00+00:00", "finishedAt": None,
+        }
+        with db() as connection:
+            connection.execute(
+                "INSERT INTO runs(id, workflow_id, status, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("stuck-run-1", "wf-1", "running", json.dumps(stuck_payload), "2020-01-01T00:00:00+00:00"),
+            )
+
+        recover_interrupted_runs()
+
+        result = self.client.get("/api/workflow-runs?workflowId=wf-1").json()["runs"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("khởi động lại", result["error"])
+
+    def test_post_with_retry_recovers_from_connect_error_then_succeeds(self):
+        from app.main import post_with_retry
+
+        ok_response = httpx.Response(200, json={"ok": True})
+        with patch("app.main.time.sleep"), patch(
+            "app.main.httpx.post",
+            side_effect=[httpx.ConnectError("boom"), httpx.ConnectError("boom"), ok_response],
+        ) as mocked:
+            response = post_with_retry("https://example.com", headers={}, json_body={})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(mocked.call_count, 3)
+
+    def test_post_with_retry_does_not_retry_read_timeout(self):
+        """ReadTimeout tren POST tao video khong duoc retry mu - co the provider da xu ly roi (tranh tao trung job tinh phi)."""
+        from app.main import post_with_retry
+
+        with patch("app.main.httpx.post", side_effect=httpx.ReadTimeout("slow")) as mocked:
+            with self.assertRaises(httpx.ReadTimeout):
+                post_with_retry("https://example.com", headers={}, json_body={})
+            self.assertEqual(mocked.call_count, 1)
+
+    def test_get_with_retry_recovers_from_read_timeout(self):
+        from app.main import get_with_retry
+
+        ok_response = httpx.Response(200, json={"ok": True})
+        with patch("app.main.time.sleep"), patch(
+            "app.main.httpx.get", side_effect=[httpx.ReadTimeout("slow"), ok_response]
+        ) as mocked:
+            response = get_with_retry("https://example.com", headers={})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(mocked.call_count, 2)
+
+    def test_crazyrouter_missing_task_id_surfaces_clear_error(self):
+        """Response thieu truong task_id (trang thai la) -> loi ro rang, khong crash mo ho."""
+        os.environ["CRAZYROUTER_API_KEY"] = "test-key"
+        try:
+            malformed = httpx.Response(
+                200, json={"data": {"status": "processing"}},
+                request=httpx.Request("POST", "https://crazyrouter.com/v1/video/create"),
+            )
+            with patch("app.main.httpx.post", return_value=malformed):
+                response = self.client.post(
+                    "/api/video",
+                    json={"prompt": "test", "provider": "crazyrouter", "model": "aigc-video-kling-2.5-turbo",
+                          "aspect_ratio": "16:9", "duration": 5, "quality": "720p"},
+                )
+            self.assertEqual(response.status_code, 502)
+            self.assertIn("task ID", response.json()["detail"])
+        finally:
+            del os.environ["CRAZYROUTER_API_KEY"]
+
+    def test_provider_error_detail_extracts_json_message(self):
+        from app.main import provider_error_detail
+
+        response = httpx.Response(403, json={"code": "quota_not_enough", "message": "user quota is not enough"})
+        error = httpx.HTTPStatusError("403", request=httpx.Request("POST", "https://example.com"), response=response)
+        detail = provider_error_detail("CrazyRouter từ chối yêu cầu", error)
+        self.assertIn("user quota is not enough", detail)
+        self.assertIn("403", detail)
 
 
 if __name__ == "__main__":

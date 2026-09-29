@@ -112,14 +112,15 @@ Kiểm tra ba URL trong `CLAUDE.md`. Không chạy provider trả phí chỉ đ�
 - [x] Chạy thật một job trả phí (`variables.provider = "crazyrouter"`) qua chính Workflow Hub — người dùng đã xác nhận, đã chạy. Luồng code đúng (request gửi đúng payload, nhận và hiển thị lỗi đúng), nhưng CrazyRouter trả `403 quota_not_enough` — tài khoản hết quota, không phải lỗi code. Nạp thêm quota rồi chạy lại là xong việc này.
 - [ ] Node `image` trong workflow — chưa có provider ảnh nào nối thật ở backend rút gọn này; sẽ báo lỗi rõ ràng nếu chạy.
 - [ ] Node `set/json/template/array/map/merge/for_each/tts/lipsync/http/browser/condition/subflow` — chưa hỗ trợ, báo lỗi rõ ràng thay vì giả vờ chạy được (xem mục 2).
-- [ ] Thư mục mới / Nhân bản / Lịch sử phiên bản / Trợ lý AI workflow trên UI Workflow Hub — nút bấm sẽ 404 vì backend chưa có các endpoint này.
+- [x] Thư mục mới / Nhân bản — đã làm (xem mục 2, "folders CRUD + clone"). Lịch sử phiên bản / Trợ lý AI workflow — vẫn 404, chưa làm (copilot-chat cần thêm provider LLM mới, ngoài phạm vi).
 
 ### P1 - Độ bền API
 
-- Thêm timeout/retry có giới hạn và idempotency cho create job.
-- Không retry mù request tạo video có thể tính phí.
-- Lưu task/job tối thiểu để khôi phục sau restart.
-- Bổ sung test cho response thiếu trường, trạng thái lạ và lỗi HTTP provider.
+- [x] Thêm timeout/retry có giới hạn cho lỗi mạng tạm thời — `post_with_retry`/`get_with_retry` trong `api/app/main.py` (2026-09-29). POST tạo video CHỈ retry khi kết nối chưa hề thiết lập (ConnectError/ConnectTimeout) — không retry ReadTimeout vì không chắc provider đã xử lý hay chưa, tránh tạo trùng job tính phí (đúng yêu cầu "Không retry mù" bên dưới). GET trạng thái (read-only) retry mọi lỗi mạng tạm thời. Có test riêng (`test_post_with_retry_*`, `test_get_with_retry_*`).
+- [x] Không retry mù request tạo video có thể tính phí — đã áp dụng như trên.
+- [x] Lưu task/job tối thiểu để khôi phục sau restart — `recover_interrupted_runs()` (xem mục 2), đánh dấu failed rõ ràng thay vì treo mãi.
+- [x] Bổ sung test cho response thiếu trường, trạng thái lạ và lỗi HTTP provider — thêm `test_crazyrouter_missing_task_id_surfaces_clear_error`, `test_provider_error_detail_extracts_json_message`. Tổng test hiện tại: 13 (từ 5).
+- **Phát hiện thêm khi viết test (2026-09-29):** `db()` dùng `with db() as connection:` khắp file nhưng `sqlite3.Connection.__exit__` chỉ commit/rollback, KHÔNG đóng connection — rò rỉ file handle thật (lộ ra trên Windows khi test dọn dẹp thư mục tạm bị "PermissionError: file đang được dùng"). Đã sửa `db()` thành contextmanager tự đóng connection — không cần sửa bất kỳ chỗ gọi nào khác (~15 chỗ), toàn bộ hành vi cũ giữ nguyên. Verify: 13/13 test pass sạch, chạy lại 1 workflow video mock thật qua API vẫn `status=succeeded` sau khi rebuild container.
 
 ### P2 - Bảo toàn dự án
 

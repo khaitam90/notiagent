@@ -7,6 +7,7 @@ import secrets
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -43,10 +44,22 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def db() -> sqlite3.Connection:
+@contextmanager
+def db():
+    # sqlite3.Connection.__exit__ chi commit/rollback, KHONG dong connection - dung "with db()"
+    # xuyen suot file ma khong tu close() se ro ri file handle (ro nhat tren Windows: file .db
+    # bi giu, khong xoa/doi ten duoc). Boc lai bang contextmanager rieng de moi noi goi
+    # "with db() as connection:" nhu cu van dung, nhung connection luon duoc close() that.
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
-    return connection
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def init_db() -> None:
@@ -700,6 +713,36 @@ def crazy_video_payload(body: VideoCreate) -> dict[str, Any]:
     }
 
 
+# Retry co gioi han cho loi mang tam thoi voi provider (khong retry loi HTTP 4xx/5xx that -
+# vd quota_not_enough se khong tu het bang cach goi lai). POST tao video CHI retry khi ket noi
+# chua he thanh lap (ConnectError/ConnectTimeout) - luc do provider chac chan chua nhan duoc
+# request nen goi lai an toan, khong tao trung job tinh phi. ReadTimeout (da gui request, chi la
+# cho phan hoi lau) KHONG retry cho POST vi khong biet provider da xu ly hay chua.
+def post_with_retry(url: str, *, headers: dict[str, str], json_body: dict[str, Any], timeout: float = 30, retries: int = 2) -> httpx.Response:
+    last_error: httpx.HTTPError | None = None
+    for attempt in range(retries + 1):
+        try:
+            return httpx.post(url, headers=headers, json=json_body, timeout=timeout)
+        except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+            last_error = error
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    raise last_error  # type: ignore[misc]
+
+
+# GET trang thai la read-only (idempotent) - an toan retry moi loai loi mang tam thoi.
+def get_with_retry(url: str, *, headers: dict[str, str], params: dict[str, str] | None = None, timeout: float = 30, retries: int = 2) -> httpx.Response:
+    last_error: httpx.HTTPError | None = None
+    for attempt in range(retries + 1):
+        try:
+            return httpx.get(url, headers=headers, params=params, timeout=timeout)
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as error:
+            last_error = error
+            if attempt < retries:
+                time.sleep(1.5 * (attempt + 1))
+    raise last_error  # type: ignore[misc]
+
+
 def provider_error_detail(prefix: str, error: httpx.HTTPStatusError) -> str:
     try:
         body = error.response.json()
@@ -797,7 +840,7 @@ def create_video(body: VideoCreate) -> dict[str, Any]:
 
     if body.provider == "crazyrouter":
         try:
-            response = httpx.post(CRAZY_VIDEO_URL, headers=crazy_headers(), json=crazy_video_payload(body), timeout=30)
+            response = post_with_retry(CRAZY_VIDEO_URL, headers=crazy_headers(), json_body=crazy_video_payload(body))
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
             raise HTTPException(status_code=502, detail=provider_error_detail("CrazyRouter từ chối yêu cầu", error)) from error
@@ -811,7 +854,7 @@ def create_video(body: VideoCreate) -> dict[str, Any]:
         return {"taskId": f"crazy:{task_id}", "status": str(data.get("status") or "processing")}
 
     try:
-        response = httpx.post(ATLAS_VIDEO_URL, headers=atlas_headers(), json=atlas_video_payload(body), timeout=30)
+        response = post_with_retry(ATLAS_VIDEO_URL, headers=atlas_headers(), json_body=atlas_video_payload(body))
         response.raise_for_status()
     except httpx.HTTPStatusError as error:
         raise HTTPException(status_code=502, detail=provider_error_detail("Atlas Cloud từ chối yêu cầu", error)) from error
@@ -851,7 +894,7 @@ def video_status(taskId: str) -> dict[str, Any]:
     if taskId.startswith("crazy:"):
         raw_task_id = taskId.removeprefix("crazy:")
         try:
-            response = httpx.get(CRAZY_STATUS_URL, headers=crazy_headers(), params={"task_id": raw_task_id}, timeout=30)
+            response = get_with_retry(CRAZY_STATUS_URL, headers=crazy_headers(), params={"task_id": raw_task_id})
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
             raise HTTPException(status_code=502, detail=provider_error_detail("Không đọc được trạng thái CrazyRouter", error)) from error
@@ -860,7 +903,7 @@ def video_status(taskId: str) -> dict[str, Any]:
         return crazy_status_response(raw_task_id, response.json())
 
     try:
-        response = httpx.get(f"{ATLAS_PREDICTION_URL}/{taskId}", headers=atlas_headers(), timeout=30)
+        response = get_with_retry(f"{ATLAS_PREDICTION_URL}/{taskId}", headers=atlas_headers())
         response.raise_for_status()
     except httpx.HTTPStatusError as error:
         raise HTTPException(status_code=502, detail=provider_error_detail("Không đọc được trạng thái Atlas Cloud", error)) from error
