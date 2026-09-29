@@ -6,6 +6,13 @@
 - Chỉ hỏi lại khi việc đó THẬT SỰ cần người dùng quyết định: tốn tiền thật (gọi provider trả phí), hành động phá huỷ/khó hoàn tác, hoặc chưa rõ người dùng MUỐN kết quả gì (không phải hỏi cách làm ra sao). Hỏi bằng câu chuyện hậu quả thực tế, không dùng thuật ngữ kỹ thuật.
 - Báo cáo trong chat: ngắn gọn, tập trung KẾT QUẢ (đã sửa được gì, còn thiếu gì, người dùng cần làm gì tiếp — nếu có), không kể lể quá trình đã đọc/đã thử gì. Phần chi tiết kỹ thuật đầy đủ (đã làm, file thay đổi, lệnh kiểm tra...) vẫn ghi vào `HANDOFF-CLAUDE-CODE.md` như "Báo cáo bắt buộc" bên dưới — đó là tài liệu cho các phiên Claude Code sau đọc, không phải để dán nguyên vào chat.
 
+## Kỷ luật (áp dụng cả khi làm trên máy khác)
+
+- Khảo sát thật trước khi làm, không giả định; không nhận "xong" khi chưa kiểm tra lại thật (chạy test, xem log, thử UI/API). Gặp lỗi thì báo trung thực, tìm gốc rễ, không lặp lại cách cũ mù quáng.
+- **Không sửa/xoá/thay đổi bất cứ thứ gì không phải do chính mình tạo ra trong phiên** (file/thư mục/cấu hình hệ thống/cache/dữ liệu sẵn có của máy hoặc của ứng dụng khác) nếu việc đó KHÔNG nằm trong phạm vi được giao rõ ràng — kể cả "dọn dẹp cho gọn". Trong phạm vi dự án này thì tự quyết định thoải mái. Nghi ngờ có ngoài phạm vi không thì coi là CÓ và hỏi trước. Nếu buộc phải sửa file có sẵn ngoài phạm vi để hoàn thành việc được yêu cầu: backup trước và báo rõ đã đụng vào gì.
+- Sao lưu hoặc dùng Git trước khi sửa thứ quan trọng; không xoá/ghi đè khi chưa chắc.
+- Không bao giờ in/sao chép khóa API vào chat, log, tài liệu hay commit.
+
 ## Đọc trước khi sửa
 
 1. Đọc `README.md` và `HANDOFF-CLAUDE-CODE.md`.
