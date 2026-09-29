@@ -289,6 +289,62 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertEqual(runs[0]["status"], "succeeded")
         self.assertTrue(any(url.startswith("/api-proxy/api/media/") for url in runs[0]["assetUrls"]))
 
+    def test_workflow_tts_node_mock_produces_audio(self):
+        created = self.client.post("/api/workflows", json={"name": "TTS test", "folderId": "personal"})
+        workflow_id = created.json()["id"]
+        self.client.patch(
+            f"/api/workflows/{workflow_id}",
+            json={"nodes": [{"id": "tts_1", "type": "tts", "config": {}}], "edges": []},
+        )
+        self.client.post(f"/api/workflows/{workflow_id}/run", json={"prompt": "xin chao", "variables": {}})
+        for _ in range(20):
+            runs = self.client.get(f"/api/workflow-runs?workflowId={workflow_id}").json()["runs"]
+            if runs[0]["status"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.1)
+        self.assertEqual(runs[0]["status"], "succeeded")
+        self.assertTrue(any(".wav" in url for url in runs[0]["assetUrls"]))
+
+    def test_workflow_tts_node_real_provider_fails_clearly_without_key(self):
+        created = self.client.post("/api/workflows", json={"name": "TTS that", "folderId": "personal"})
+        workflow_id = created.json()["id"]
+        self.client.patch(
+            f"/api/workflows/{workflow_id}",
+            json={"nodes": [{"id": "tts_1", "type": "tts", "config": {}}], "edges": []},
+        )
+        self.client.post(
+            f"/api/workflows/{workflow_id}/run",
+            json={"prompt": "xin chao", "variables": {"tts_provider": "elevenlabs"}},
+        )
+        for _ in range(20):
+            runs = self.client.get(f"/api/workflow-runs?workflowId={workflow_id}").json()["runs"]
+            if runs[0]["status"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.1)
+        self.assertEqual(runs[0]["status"], "failed")
+        self.assertIn("chưa được cấu hình", runs[0]["error"])
+
+    def test_workflow_lipsync_node_mock_produces_video(self):
+        from app.main import MOCK_VIDEO_FILENAME, UPLOAD_DIR
+
+        # Doc lap voi test khac - tu tao san file mock thay vi phu thuoc thu tu chay test.
+        (UPLOAD_DIR / MOCK_VIDEO_FILENAME).write_bytes(b"fake-mp4")
+
+        created = self.client.post("/api/workflows", json={"name": "Lipsync test", "folderId": "personal"})
+        workflow_id = created.json()["id"]
+        self.client.patch(
+            f"/api/workflows/{workflow_id}",
+            json={"nodes": [{"id": "lip_1", "type": "lipsync", "config": {}}], "edges": []},
+        )
+        self.client.post(f"/api/workflows/{workflow_id}/run", json={"prompt": "x", "variables": {}})
+        for _ in range(20):
+            runs = self.client.get(f"/api/workflow-runs?workflowId={workflow_id}").json()["runs"]
+            if runs[0]["status"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.1)
+        self.assertEqual(runs[0]["status"], "succeeded")
+        self.assertTrue(any(".mp4" in url for url in runs[0]["assetUrls"]))
+
     def test_provider_error_detail_extracts_json_message(self):
         from app.main import provider_error_detail
 

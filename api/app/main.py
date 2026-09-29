@@ -37,6 +37,7 @@ CRAZY_MVP_MODEL = "aigc-video-kling-2.5-turbo"
 OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations"
 OPENAI_IMAGE_MODEL = "gpt-image-1"
 MOCK_IMAGE_FILENAME = "mock-placeholder.png"
+MOCK_AUDIO_FILENAME = "mock-placeholder.wav"
 
 # provider="mock" — không gọi provider trả phí nào; dùng để kiểm chứng luồng UI
 # (nút bấm -> /api/video -> poll -> hiển thị output) miễn phí trước khi chạy job thật.
@@ -413,7 +414,7 @@ def workflow_runs(workflowId: str | None = None) -> dict[str, Any]:
 # rang thay vi gia vo chay duoc - khong co provider anh/automation nao duoc noi day that ca.
 
 TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
-SUPPORTED_RUN_NODE_TYPES = {"input", "prompt", "video", "image", "output"}
+SUPPORTED_RUN_NODE_TYPES = {"input", "prompt", "video", "image", "tts", "lipsync", "output"}
 
 
 def render_run_template(template: str, state: dict[str, Any]) -> str:
@@ -564,6 +565,38 @@ def execute_workflow_graph(
                 if image_url not in asset_urls:
                     asset_urls.append(image_url)
                 entry["output"] = {"imageUrl": image_url}
+            elif node_type == "tts":
+                # Chua co provider TTS that nao duoc cau hinh tren may nay (can them ElevenLabs
+                # hoac tuong duong - dich vu tra phi moi, chua co key). CHI ho tro mock: sinh file
+                # WAV cau lang bang stdlib de workflow co node TTS van chay het duoc, khong bao
+                # loi oan. Bao ro rang neu chon provider khac mock thay vi gia vo tao giong that.
+                tts_provider = str(state.get("tts_provider") or "mock").strip().lower()
+                if tts_provider != "mock":
+                    raise RuntimeError(
+                        f"Provider TTS '{tts_provider}' chưa được cấu hình — cần thêm API key dịch vụ giọng nói (vd ElevenLabs) vào .env trước."
+                    )
+                audio_url = ensure_mock_audio()
+                state["audio_url"] = audio_url
+                if audio_url not in asset_urls:
+                    asset_urls.append(audio_url)
+                entry["output"] = {"audioUrl": audio_url}
+            elif node_type == "lipsync":
+                # Tuong tu TTS: chua co provider lipsync that (vd HeyGen) duoc cau hinh. Mock tra
+                # lai chinh video mau da co san de workflow chay het duoc va nguoi dung thay dung
+                # hinh dang ket qua cuoi, khong phai video da ghep khau hinh that.
+                lipsync_provider = str(state.get("lipsync_provider") or "mock").strip().lower()
+                if lipsync_provider != "mock":
+                    raise RuntimeError(
+                        f"Provider lipsync '{lipsync_provider}' chưa được cấu hình — cần thêm API key dịch vụ ghép khẩu hình (vd HeyGen) vào .env trước."
+                    )
+                sample = UPLOAD_DIR / MOCK_VIDEO_FILENAME
+                if not sample.is_file():
+                    raise RuntimeError(f"Thiếu file mock mẫu: {MOCK_VIDEO_FILENAME} trong {UPLOAD_DIR}")
+                lipsync_url = media_url(MOCK_VIDEO_FILENAME)
+                state["video_url"] = lipsync_url
+                if lipsync_url not in asset_urls:
+                    asset_urls.append(lipsync_url)
+                entry["output"] = {"videoUrl": lipsync_url, "note": "mock — chưa ghép khẩu hình thật"}
             elif node_type == "output":
                 value_path = str(config.get("value_path") or "").strip()
                 key = value_path.removeprefix("state.")
@@ -927,6 +960,26 @@ def ensure_mock_image() -> str:
     if not target.is_file():
         target.write_bytes(make_placeholder_png())
     return media_url(MOCK_IMAGE_FILENAME)
+
+
+def make_placeholder_wav(seconds: float = 2.0, sample_rate: int = 16000) -> bytes:
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(b"\x00\x00" * int(sample_rate * seconds))
+    return buffer.getvalue()
+
+
+def ensure_mock_audio() -> str:
+    target = UPLOAD_DIR / MOCK_AUDIO_FILENAME
+    if not target.is_file():
+        target.write_bytes(make_placeholder_wav())
+    return media_url(MOCK_AUDIO_FILENAME)
 
 
 def openai_headers() -> dict[str, str]:
