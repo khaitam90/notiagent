@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, Download, Globe, Pencil, Upload } from 'lucide-react'
+import { ArrowLeft, Copy, Download, Globe, Package, Pencil, Upload } from 'lucide-react'
 import type { MutableRefObject } from 'react'
 import type { WorkflowDefinition } from '../../lib/workflows'
 
@@ -94,7 +94,7 @@ export function WorkflowHubEditorHeader({
           Xuất JSON
         </button>
         <button type="button" className="wf-secondary-btn" onClick={exportWorkflowPackageAction} title="Xuất gói" aria-label="Xuất gói">
-          <Download size={15} />
+          <Package size={15} />
           Xuất gói
         </button>
         {!isEditable && (
