@@ -2,6 +2,7 @@
 # Can: ket noi mang, quyen dang nhap GitHub (repo private khaitam90/notiagent).
 # Chay: powershell -ExecutionPolicy Bypass -File setup-new-pc.ps1 -TransferDir <thu muc chua zip + secrets>
 #   (file nay nam san trong repo: scripts\setup-new-pc.ps1; neu chua co repo, tai rieng file nay ve chay)
+[CmdletBinding(PositionalBinding = $false)]  # tranh nham tham so khi dan lenh bi dinh dong
 param(
     [string]$TransferDir = '',
     [string]$ProjectDir = '',
@@ -11,7 +12,9 @@ param(
     [int]$WebPort = 8080,
     [int]$ApiPort = 8780,
     [int]$N8nPort = 5678,
-    [string]$ComposeProject = ''
+    [string]$ComposeProject = '',
+    # Nap DE du lieu tu zip du thu muc du lieu da co noi dung (thu muc cu duoc doi ten, khong xoa).
+    [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 
@@ -51,16 +54,27 @@ if (Test-Path (Join-Path $ProjectDir '.git')) {
 }
 
 # 3. Du lieu
-New-Item -ItemType Directory -Force $DataRoot | Out-Null
-if ($TransferDir -and (Test-Path $TransferDir)) {
+if ($TransferDir -and -not (Test-Path $TransferDir)) { throw "Khong thay thu muc chuyen giao: $TransferDir (kiem tra lai duong dan, vd C:\NotiAgentTransfer)" }
+$zip = $null
+if ($TransferDir) {
     $zip = Get-ChildItem $TransferDir -Filter 'NotiAgentData-*.zip' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($zip) {
-        if ((Get-ChildItem $DataRoot -Force | Measure-Object).Count -gt 0) {
-            Write-Host "Thu muc du lieu $DataRoot da co noi dung - KHONG ghi de. Xoa/doi ten no neu muon nap lai tu $($zip.Name)."
-        } else {
-            Write-Host "Nap du lieu tu $($zip.Name)..."
-            Expand-Archive -Path $zip.FullName -DestinationPath $DataRoot -Force
+    if (-not $zip) { throw "Khong co file NotiAgentData-*.zip trong $TransferDir" }
+}
+New-Item -ItemType Directory -Force $DataRoot | Out-Null
+if ($zip) {
+    $hasContent = (Get-ChildItem $DataRoot -Force | Measure-Object).Count -gt 0
+    if ($hasContent -and -not $Force) {
+        Write-Host "Thu muc du lieu $DataRoot da co noi dung - KHONG ghi de. Chay lai voi -Force de nap $($zip.Name) (thu muc cu se duoc doi ten, khong bi xoa)."
+    } else {
+        if ($hasContent) {
+            if (Test-Path (Join-Path $ProjectDir 'docker-compose.yml')) { Push-Location $ProjectDir; try { if ($ComposeProject) { cmd /c "docker compose -p $ComposeProject down >nul 2>&1" } else { cmd /c 'docker compose down >nul 2>&1' } } finally { Pop-Location } }
+            $backup = "$DataRoot.truoc-khi-nap-" + (Get-Date -Format 'yyyyMMdd-HHmmss')
+            Move-Item $DataRoot $backup
+            New-Item -ItemType Directory -Force $DataRoot | Out-Null
+            Write-Host "Da doi ten du lieu cu thanh $backup"
         }
+        Write-Host "Nap du lieu tu $($zip.Name)..."
+        Expand-Archive -Path $zip.FullName -DestinationPath $DataRoot -Force
     }
 }
 foreach ($sub in 'db', 'media', 'n8n') { New-Item -ItemType Directory -Force (Join-Path $DataRoot $sub) | Out-Null }
@@ -71,6 +85,17 @@ $secrets = if ($TransferDir) { Join-Path $TransferDir 'NotiAgent-secrets.env' } 
 if (-not (Test-Path $envPath)) {
     if ($secrets -and (Test-Path $secrets)) { Copy-Item $secrets $envPath }
     else { Copy-Item (Join-Path $ProjectDir '.env.example') $envPath; Write-Host 'Chua co khoa API: mo .env va dien khoa (TOGETHER_API_KEY, ATLASCLOUD_API_KEY...).' }
+} elseif ($secrets -and (Test-Path $secrets)) {
+    # .env da co (vd tu lan chay truoc): dien cac khoa dang de trong tu file secrets, giu nguyen khoa da co.
+    $cur = @(Get-Content $envPath)
+    foreach ($line in (Get-Content $secrets)) {
+        if ($line -match '^([A-Z0-9_]+_(KEY|TOKEN))=(.+)$') {
+            $k = $Matches[1]; $v = $Matches[3]
+            $idx = -1; for ($n = 0; $n -lt $cur.Count; $n++) { if ($cur[$n] -match "^$k=") { $idx = $n; break } }
+            if ($idx -ge 0) { if ($cur[$idx] -match "^$k=\s*$") { $cur[$idx] = "$k=$v" } } else { $cur += "$k=$v" }
+        }
+    }
+    Set-Content -Path $envPath -Value $cur -Encoding ascii
 }
 $dataRootFwd = $DataRoot.Replace([string][char]92, '/')
 $lines = @(Get-Content $envPath)

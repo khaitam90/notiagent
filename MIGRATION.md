@@ -6,6 +6,7 @@ Tất cả nằm trong Git, riêng **dữ liệu chạy** (ảnh/video, database
   (zip dữ liệu + `NotiAgent-secrets.env` + `setup-new-pc.ps1` + `HUONG-DAN.txt`). Tạm dừng container vài giây để database nhất quán.
 - **Máy mới:** chép thư mục đó sang, chạy `setup-new-pc.ps1 -TransferDir <thư mục>`. Script tự cài Git + Docker Desktop
   (winget), clone repo, nạp dữ liệu (không ghi đè nếu thư mục dữ liệu đã có nội dung), sửa `.env` cho đúng đường dẫn, `docker compose up -d --build`, kiểm tra API/Web/n8n.
+- **Nếu lần cài đầu chạy sai (thiếu dữ liệu/khóa):** chạy lại với `-Force` — thư mục dữ liệu hiện có được **đổi tên** (`...truoc-khi-nap-<giờ>`, không xóa), nạp lại từ zip, và điền các khóa API còn trống vào `.env` có sẵn. Script báo lỗi rõ nếu `-TransferDir` sai, và không nhận tham số lạc (tránh lỗi dán lệnh dính dòng).
 - Ứng dụng tự dựng trong Docker nên máy mới **không cần** Node/Python.
 - `NotiAgent-secrets.env` chứa khóa thật: chỉ chuyển qua USB/mạng nội bộ, không đưa lên GitHub/cloud, xóa sau khi dùng.
 - Đã kiểm chứng 2026-09-30 bằng cách chạy chính script trên máy cũ vào thư mục + cổng riêng (`-ProjectDir/-DataRoot/-WebPort/-ApiPort/-N8nPort/-ComposeProject`):
