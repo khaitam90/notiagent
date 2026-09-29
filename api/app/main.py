@@ -34,6 +34,10 @@ CRAZY_VIDEO_URL = "https://crazyrouter.com/v1/video/create"
 CRAZY_STATUS_URL = "https://crazyrouter.com/v1/video/query"
 CRAZY_MVP_MODEL = "aigc-video-kling-2.5-turbo"
 
+OPENAI_IMAGE_URL = "https://api.openai.com/v1/images/generations"
+OPENAI_IMAGE_MODEL = "gpt-image-1"
+MOCK_IMAGE_FILENAME = "mock-placeholder.png"
+
 # provider="mock" — không gọi provider trả phí nào; dùng để kiểm chứng luồng UI
 # (nút bấm -> /api/video -> poll -> hiển thị output) miễn phí trước khi chạy job thật.
 MOCK_VIDEO_FILENAME = "kling-test-paper-boat-20260928.mp4"
@@ -42,6 +46,15 @@ MOCK_TASKS: dict[str, float] = {}
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def media_url(filename: str) -> str:
+    # Web (nginx) CHI proxy duong dan bat dau bang "/api-proxy/" sang API (xem nginx.conf) - moi
+    # URL tra ve de trinh duyet dung truc tiep (img/video src, link tai xuong...) PHAI co tien to
+    # nay, neu khong se roi vao route React "/" va tra ve index.html thay vi file that (anh/video
+    # vo hinh, naturalWidth=0). Dung ham nay o MOI noi tra url media thay vi tu ghep chuoi, tranh
+    # lap lai loi da gap 3 lan (upload, anh mock, anh OpenAI - sua 2026-09-29).
+    return f"/api-proxy/api/media/{filename}"
 
 
 @contextmanager
@@ -135,6 +148,14 @@ class VideoCreate(BaseModel):
     quality: str = "480p"
     image_url: str | None = None
     video_url: str | None = None
+
+
+class ImageCreate(BaseModel):
+    prompt: str = Field(min_length=1, max_length=4000)
+    provider: str = "mock"
+    model: str = OPENAI_IMAGE_MODEL
+    width: int = Field(default=1024, ge=256, le=2048)
+    height: int = Field(default=1024, ge=256, le=2048)
 
 
 class WorkflowRunCreate(BaseModel):
@@ -392,7 +413,7 @@ def workflow_runs(workflowId: str | None = None) -> dict[str, Any]:
 # rang thay vi gia vo chay duoc - khong co provider anh/automation nao duoc noi day that ca.
 
 TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
-SUPPORTED_RUN_NODE_TYPES = {"input", "prompt", "video", "output"}
+SUPPORTED_RUN_NODE_TYPES = {"input", "prompt", "video", "image", "output"}
 
 
 def render_run_template(template: str, state: dict[str, Any]) -> str:
@@ -528,6 +549,21 @@ def execute_workflow_graph(
                 if video_url not in asset_urls:
                     asset_urls.append(video_url)
                 entry["output"] = {"taskId": task_id, "videoUrl": video_url}
+            elif node_type == "image":
+                # Rieng bien "image_provider" - KHONG dung chung "provider" voi node video, vi
+                # 1 workflow co the co ca 2 node va can chon nha cung cap doc lap cho tung loai.
+                image_provider = str(state.get("image_provider") or "mock").strip().lower()
+                image_result = create_image(ImageCreate(
+                    prompt=str(state.get("prompt") or initial_state.get("prompt") or ""),
+                    provider=image_provider,
+                ))
+                image_url = str(image_result.get("url") or "")
+                if not image_url:
+                    raise RuntimeError("Provider không trả về ảnh")
+                state["image_url"] = image_url
+                if image_url not in asset_urls:
+                    asset_urls.append(image_url)
+                entry["output"] = {"imageUrl": image_url}
             elif node_type == "output":
                 value_path = str(config.get("value_path") or "").strip()
                 key = value_path.removeprefix("state.")
@@ -634,7 +670,7 @@ def upload(file: UploadFile = File(...)) -> dict[str, Any]:
                 target.unlink(missing_ok=True)
                 raise HTTPException(status_code=413, detail="Tệp vượt giới hạn 500 MB")
             output.write(chunk)
-    return {"ok": True, "fileName": file.filename, "url": f"/api/media/{filename}", "size": size}
+    return {"ok": True, "fileName": file.filename, "url": media_url(filename), "size": size}
 
 
 @app.get("/api/media/{filename}")
@@ -654,7 +690,7 @@ def download(url: str, filename: str = "notiagent-download") -> Any:
     # Tai xuong tren UI se loi.
     safe_name = Path(filename).name.replace("/", "_").replace("\\", "_") or "notiagent-download"
 
-    if url.startswith("/api/media/"):
+    if url.startswith("/api/media/") or url.startswith("/api-proxy/api/media/"):
         target = UPLOAD_DIR / Path(url).name
         if not target.is_file():
             raise HTTPException(status_code=404, detail="Không tìm thấy tệp")
@@ -863,6 +899,83 @@ def atlas_status_response(task_id: str, payload: dict[str, Any]) -> dict[str, An
             "failMsg": data.get("error") or data.get("message") if state == "fail" else None,
         }
     }
+
+
+# --- Tao anh -----------------------------------------------------------------
+# Cung mo hinh nhu video: provider="mock" (mac dinh, mien phi, dung de kiem chung workflow
+# node "image" chay dung ma khong tra tien) + provider="openai" (that, can OPENAI_API_KEY
+# trong .env - hien CHUA co key nao duoc cau hinh tren may nay, xem HANDOFF-CLAUDE-CODE.md).
+def make_placeholder_png(width: int = 768, height: int = 768, color: tuple[int, int, int] = (99, 102, 241)) -> bytes:
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        import struct
+        import zlib
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    import struct
+    import zlib
+
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    row = bytes([0]) + bytes(color) * width
+    raw = row * height
+    idat = zlib.compress(raw)
+    return sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
+
+
+def ensure_mock_image() -> str:
+    target = UPLOAD_DIR / MOCK_IMAGE_FILENAME
+    if not target.is_file():
+        target.write_bytes(make_placeholder_png())
+    return media_url(MOCK_IMAGE_FILENAME)
+
+
+def openai_headers() -> dict[str, str]:
+    token = os.getenv("OPENAI_API_KEY", "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="Chưa cấu hình OPENAI_API_KEY trong .env")
+    return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+def create_image(body: ImageCreate) -> dict[str, Any]:
+    if body.provider == "mock":
+        return {"ok": True, "url": ensure_mock_image(), "provider": "mock"}
+
+    if body.provider != "openai":
+        raise HTTPException(status_code=400, detail=f"Provider ảnh '{body.provider}' chưa được hỗ trợ")
+
+    payload = {
+        "model": body.model or OPENAI_IMAGE_MODEL,
+        "prompt": body.prompt.strip(),
+        "size": f"{body.width}x{body.height}",
+        "n": 1,
+    }
+    try:
+        response = post_with_retry(OPENAI_IMAGE_URL, headers=openai_headers(), json_body=payload, timeout=60)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        raise HTTPException(status_code=502, detail=provider_error_detail("OpenAI từ chối yêu cầu", error)) from error
+    except httpx.HTTPError as error:
+        raise HTTPException(status_code=502, detail=f"Không kết nối được OpenAI: {error}") from error
+
+    data = response.json()
+    items = data.get("data") or []
+    if not items:
+        raise HTTPException(status_code=502, detail="OpenAI không trả về ảnh")
+    item = items[0]
+    b64 = item.get("b64_json")
+    if b64:
+        import base64
+        filename = f"{secrets.token_hex(12)}.png"
+        (UPLOAD_DIR / filename).write_bytes(base64.b64decode(b64))
+        return {"ok": True, "url": media_url(filename), "provider": "openai"}
+    if item.get("url"):
+        return {"ok": True, "url": item["url"], "provider": "openai"}
+    raise HTTPException(status_code=502, detail="OpenAI không trả về ảnh hợp lệ")
+
+
+@app.post("/api/image", status_code=201)
+def create_image_endpoint(body: ImageCreate) -> dict[str, Any]:
+    return create_image(body)
 
 
 @app.get("/api/video/models")

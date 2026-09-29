@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -241,6 +242,52 @@ class ApiSmokeTests(unittest.TestCase):
     def test_download_rejects_non_http_url(self):
         response = self.client.get("/api/download", params={"url": "file:///etc/passwd", "filename": "x"})
         self.assertEqual(response.status_code, 400)
+
+    def test_create_image_mock_no_cost_flow(self):
+        """provider=mock cho anh cung phai mien phi, giong video."""
+        response = self.client.post("/api/image", json={"prompt": "hoa hong do", "provider": "mock"})
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        # Web (nginx) chi proxy "/api-proxy/" sang API - url phai co tien to nay de trinh duyet
+        # hien thi duoc that (bug da gap: thieu tien to -> anh vo hinh, xem media_url() trong main.py)
+        self.assertTrue(body["url"].startswith("/api-proxy/api/media/"))
+
+        # Anh mock phai la PNG that (kiem tra bang magic bytes), khong phai file rong/gia
+        # TestClient goi thang vao app, khong qua nginx, nen bo tien to "/api-proxy" truoc khi goi.
+        image_response = self.client.get(body["url"].removeprefix("/api-proxy"))
+        self.assertEqual(image_response.status_code, 200)
+        self.assertTrue(image_response.content.startswith(b"\x89PNG\r\n\x1a\n"))
+
+    def test_create_image_unsupported_provider_rejected(self):
+        response = self.client.post("/api/image", json={"prompt": "x", "provider": "replicate"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_workflow_prompt_to_image_run_succeeds_via_mock(self):
+        created = self.client.post("/api/workflows", json={"name": "Anh workflow", "folderId": "personal"})
+        workflow_id = created.json()["id"]
+        self.client.patch(
+            f"/api/workflows/{workflow_id}",
+            json={
+                "nodes": [
+                    {"id": "prompt_1", "type": "prompt", "config": {"template": "{{prompt}}"}},
+                    {"id": "image_1", "type": "image", "config": {}},
+                ],
+                "edges": [{"id": "e1", "source": "prompt_1", "target": "image_1"}],
+            },
+        )
+        run_response = self.client.post(
+            f"/api/workflows/{workflow_id}/run",
+            json={"prompt": "chan dung mua thu", "variables": {}},
+        )
+        self.assertEqual(run_response.status_code, 200)
+
+        for _ in range(20):
+            runs = self.client.get(f"/api/workflow-runs?workflowId={workflow_id}").json()["runs"]
+            if runs[0]["status"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.1)
+        self.assertEqual(runs[0]["status"], "succeeded")
+        self.assertTrue(any(url.startswith("/api-proxy/api/media/") for url in runs[0]["assetUrls"]))
 
     def test_provider_error_detail_extracts_json_message(self):
         from app.main import provider_error_detail
