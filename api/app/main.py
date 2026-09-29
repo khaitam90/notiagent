@@ -68,11 +68,44 @@ def init_db() -> None:
                 payload TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS folders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
 
 
+def recover_interrupted_runs() -> None:
+    # Thread nen thuc thi workflow (execute_workflow_graph) chet theo tien trinh khi container
+    # restart - run dang "running"/"queued" se ket qua treo mai mai tren UI (frontend cu poll
+    # 5s cho toi khi status doi thanh succeeded/failed). Danh dau that bai ro rang ngay khi API
+    # khoi dong lai, thay vi de nguoi dung thay "dang chay" vinh vien khong co ket qua.
+    timestamp = now_iso()
+    with db() as connection:
+        stuck = connection.execute(
+            "SELECT id, payload FROM runs WHERE status IN ('running', 'queued')"
+        ).fetchall()
+        for row in stuck:
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                continue
+            payload["status"] = "failed"
+            payload["error"] = "Bị gián đoạn do server khởi động lại — chạy lại workflow."
+            payload["message"] = payload["error"]
+            payload["updatedAt"] = timestamp
+            payload["finishedAt"] = timestamp
+            connection.execute(
+                "UPDATE runs SET status = 'failed', payload = ? WHERE id = ?",
+                (json.dumps(payload), row["id"]),
+            )
+
+
 init_db()
+recover_interrupted_runs()
 
 
 class WorkflowCreate(BaseModel):
@@ -139,20 +172,82 @@ def health() -> dict[str, Any]:
     return {"ok": True, "service": "notiagent-api", "database": "sqlite"}
 
 
+SYSTEM_FOLDER_IDS = {"templates", "personal", "sandbox"}
+
+
+def system_folders(timestamp: str) -> list[dict[str, Any]]:
+    return [
+        {"id": "templates", "name": "Templates", "kind": "template", "system": True, "updatedAt": timestamp},
+        {"id": "personal", "name": "Workflow của tôi", "kind": "personal", "system": True, "updatedAt": timestamp},
+        {"id": "sandbox", "name": "Phòng thử nghiệm", "kind": "sandbox", "system": True, "updatedAt": timestamp},
+    ]
+
+
+def folder_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    return {"id": row["id"], "name": row["name"], "system": False, "updatedAt": row["updated_at"]}
+
+
 @app.get("/api/workflows/bootstrap")
 def workflow_bootstrap() -> dict[str, Any]:
     with db() as connection:
         workflows = [workflow_from_row(row) for row in connection.execute("SELECT * FROM workflows ORDER BY updated_at DESC")]
         runs = [json.loads(row["payload"]) for row in connection.execute("SELECT payload FROM runs ORDER BY created_at DESC LIMIT 50")]
+        custom_folders = [folder_from_row(row) for row in connection.execute("SELECT * FROM folders ORDER BY created_at ASC")]
     return {
-        "folders": [
-            {"id": "templates", "name": "Templates", "kind": "template"},
-            {"id": "personal", "name": "Workflow của tôi", "kind": "personal"},
-            {"id": "sandbox", "name": "Phòng thử nghiệm", "kind": "sandbox"},
-        ],
+        "folders": system_folders(now_iso()) + custom_folders,
         "workflows": workflows,
         "runs": runs,
     }
+
+
+class WorkflowFolderCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+@app.post("/api/workflow-folders", status_code=201)
+def create_workflow_folder(body: WorkflowFolderCreate) -> dict[str, Any]:
+    folder_id = secrets.token_hex(8)
+    timestamp = now_iso()
+    with db() as connection:
+        connection.execute(
+            "INSERT INTO folders(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (folder_id, body.name.strip(), timestamp, timestamp),
+        )
+        row = connection.execute("SELECT * FROM folders WHERE id = ?", (folder_id,)).fetchone()
+    return folder_from_row(row)
+
+
+@app.patch("/api/workflow-folders/{folder_id}")
+def rename_workflow_folder(folder_id: str, body: WorkflowFolderCreate) -> dict[str, Any]:
+    if folder_id in SYSTEM_FOLDER_IDS:
+        raise HTTPException(status_code=400, detail="Không thể đổi tên thư mục hệ thống")
+    timestamp = now_iso()
+    with db() as connection:
+        updated = connection.execute(
+            "UPDATE folders SET name = ?, updated_at = ? WHERE id = ?",
+            (body.name.strip(), timestamp, folder_id),
+        ).rowcount
+        if not updated:
+            raise HTTPException(status_code=404, detail="Không tìm thấy thư mục")
+        row = connection.execute("SELECT * FROM folders WHERE id = ?", (folder_id,)).fetchone()
+    return folder_from_row(row)
+
+
+@app.delete("/api/workflow-folders/{folder_id}")
+def delete_workflow_folder(folder_id: str) -> dict[str, bool]:
+    if folder_id in SYSTEM_FOLDER_IDS:
+        raise HTTPException(status_code=400, detail="Không thể xoá thư mục hệ thống")
+    timestamp = now_iso()
+    with db() as connection:
+        deleted = connection.execute("DELETE FROM folders WHERE id = ?", (folder_id,)).rowcount
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Không tìm thấy thư mục")
+        # Workflow trong thu muc bi xoa chuyen ve "Workflow cua toi" (personal), khong mat workflow.
+        connection.execute(
+            "UPDATE workflows SET folder_id = 'personal', updated_at = ? WHERE folder_id = ?",
+            (timestamp, folder_id),
+        )
+    return {"ok": True}
 
 
 @app.post("/api/workflows", status_code=201)
@@ -207,6 +302,37 @@ def update_workflow(workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
         )
         updated = connection.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
     return workflow_from_row(updated)
+
+
+class WorkflowCloneRequest(BaseModel):
+    folderId: str = Field(default="personal", min_length=1, max_length=80)
+
+
+@app.post("/api/workflows/{workflow_id}/clone", status_code=201)
+def clone_workflow(workflow_id: str, body: WorkflowCloneRequest) -> dict[str, Any]:
+    with db() as connection:
+        row = connection.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy workflow")
+        source = workflow_from_row(row)
+        new_id = secrets.token_hex(12)
+        timestamp = now_iso()
+        payload = {
+            "description": source["description"],
+            "tags": source["tags"],
+            "nodes": source["nodes"],
+            "edges": source["edges"],
+            "category": "custom",
+            "media": source["media"],
+            "published": False,
+            "sourceTemplateId": source["id"] if source["category"] == "template" else source.get("sourceTemplateId", ""),
+        }
+        connection.execute(
+            "INSERT INTO workflows(id, name, folder_id, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (new_id, f"{source['name']} (bản sao)", body.folderId, json.dumps(payload), timestamp, timestamp),
+        )
+        created = connection.execute("SELECT * FROM workflows WHERE id = ?", (new_id,)).fetchone()
+    return workflow_from_row(created)
 
 
 @app.delete("/api/workflows/{workflow_id}")
