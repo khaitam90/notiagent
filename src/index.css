@@ -570,3 +570,9 @@
 .vs-confirm-bar button:hover{border-color:var(--cc-cyan)}
 .vs-confirm-run{border-color:#f87171!important;color:#f87171!important}
 .vs-confirm-mock{border-color:var(--cc-cyan)!important;color:var(--cc-cyan)!important}
+
+/* Chon model giong doc/khop moi ngay tren node (WorkflowHubNodeAudioPanel) */
+.wf-node-audio-panel{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.wf-node-audio-panel label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:#9fb0cc}
+.wf-node-audio-panel select{width:100%;padding:6px 8px;border:1px solid #2a3952;border-radius:8px;background:#0c1524;color:#e6edf8;font-size:12px}
+.wf-node-audio-panel small{font-size:11px;line-height:1.35;color:#8193b0}

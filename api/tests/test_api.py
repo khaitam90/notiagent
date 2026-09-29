@@ -183,6 +183,18 @@ class ApiSmokeTests(unittest.TestCase):
         self.client.delete(f"/api/workflows/{workflow_id}")
         self.assertEqual(self.client.get(f"/api/workflows/{workflow_id}/versions").json()["versions"], [])
 
+    def test_together_dimensions_are_multiples_of_16_and_capped(self):
+        from app.main import fit_together_dimensions
+
+        self.assertEqual(fit_together_dimensions(1344, 768), (1344, 768))
+        for side in fit_together_dimensions(1000, 1000):
+            self.assertEqual(side % 16, 0)
+            self.assertLessEqual(abs(side - 1000), 16)
+        width, height = fit_together_dimensions(4096, 2304)
+        self.assertEqual((width % 16, height % 16), (0, 0))
+        self.assertLessEqual(width * height, 4_194_304 * 1.01)
+        self.assertEqual(self.client.post("/api/image", json={"prompt": "x", "provider": "mock", "width": 4096, "height": 2304}).status_code, 201)
+
     def test_recover_interrupted_runs_marks_stuck_as_failed(self):
         from app.main import db, recover_interrupted_runs
 

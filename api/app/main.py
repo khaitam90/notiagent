@@ -167,8 +167,8 @@ class ImageCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     provider: str = "mock"
     model: str = OPENAI_IMAGE_MODEL
-    width: int = Field(default=1024, ge=256, le=2048)
-    height: int = Field(default=1024, ge=256, le=2048)
+    width: int = Field(default=1024, ge=256, le=4096)
+    height: int = Field(default=1024, ge=256, le=4096)
     num_images: int = Field(default=1, ge=1, le=4)
     # image_url/image_urls (anh tham chieu de chinh sua/giu nhan vat) va face_id: frontend co gui
     # nhung provider hien co (mock/together/openai text-to-image) CHUA ho tro anh tham chieu that -
@@ -1153,6 +1153,14 @@ def extract_image_urls(items: list[dict[str, Any]]) -> list[str]:
     return urls
 
 
+TOGETHER_MAX_PIXELS = 4_194_304  # FLUX.2: toi da ~4MP, canh la boi so cua 16
+
+
+def fit_together_dimensions(width: int, height: int) -> tuple[int, int]:
+    scale = min(1.0, (TOGETHER_MAX_PIXELS / (width * height)) ** 0.5)
+    return tuple(max(256, int(round(side * scale / 16)) * 16) for side in (width, height))  # type: ignore[return-value]
+
+
 def create_image(body: ImageCreate) -> dict[str, Any]:
     if body.image_url or body.image_urls:
         raise HTTPException(status_code=400, detail="Ảnh tham chiếu (chỉnh sửa/giữ nhân vật) chưa được hỗ trợ ở backend rút gọn này — chỉ tạo ảnh mới từ prompt.")
@@ -1165,11 +1173,12 @@ def create_image(body: ImageCreate) -> dict[str, Any]:
         return {"ok": True, "url": url, "imageUrl": url, "imageUrls": urls, "provider": "mock"}
 
     if body.provider == "together":
+        together_width, together_height = fit_together_dimensions(body.width, body.height)
         payload = {
             "model": body.model if body.model and body.model != OPENAI_IMAGE_MODEL else TOGETHER_DEFAULT_IMAGE_MODEL,
             "prompt": body.prompt.strip(),
-            "width": body.width,
-            "height": body.height,
+            "width": together_width,
+            "height": together_height,
             "steps": 4,
             "n": body.num_images,
         }

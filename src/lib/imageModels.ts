@@ -54,6 +54,9 @@ export const IMAGE_QUALITY_LABELS: Record<ImageQualityTier, string> = {
 // Fal khác (Nano Banana 2/Lite/Pro, GPT Image 2, Grok Imagine Image, Stable Diffusion 3.5,
 // FLUX.2 Pro/Max + FaceID) KHÔNG có bằng chứng tồn tại trên Novita — đã gỡ khỏi danh mục thay
 // vì để lại lựa chọn hỏng. Muốn khôi phục nhóm này cần một provider khác hỗ trợ đúng model đó.
+// Tỉ lệ phổ biến mà các model này đều nhận (kích thước tính từ tỉ lệ ở imageDimensionsForOutput).
+const FULL_IMAGE_RATIOS = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5', '21:9']
+
 const SEEDREAM_50: ImageModel = {
   id: 'seedream-5.0-lite',
   provider: 'novita',
@@ -68,7 +71,7 @@ const SEEDREAM_50: ImageModel = {
   defaultSize: { width: 1024, height: 1024 },
   // Novita docs: size mặc định 2048x2048, hỗ trợ 2K/3K hoặc WIDTHxHEIGHT tuỳ chỉnh.
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -85,7 +88,7 @@ const FLUX_2_DEV: ImageModel = {
   capabilities: ['Text-to-image'],
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -102,7 +105,7 @@ const FLUX_2_PRO: ImageModel = {
   capabilities: ['Text-to-image'],
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -125,7 +128,7 @@ const GPT_IMAGE_2: ImageModel = {
   premium: true,
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -143,7 +146,7 @@ const GPT_IMAGE_25: ImageModel = {
   premium: true,
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -161,7 +164,7 @@ const NANO_BANANA_PRO: ImageModel = {
   premium: true,
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '4K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -178,7 +181,7 @@ const NANO_BANANA_2_LITE: ImageModel = {
   capabilities: ['Text-to-image'],
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -196,7 +199,7 @@ const SEEDREAM_5_PRO: ImageModel = {
   premium: true,
   defaultSize: { width: 1024, height: 1024 },
   maxResolution: '2K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -234,7 +237,7 @@ const SEEDREAM_45: ImageModel = {
   defaultSize: { width: 1024, height: 1024 },
   // Novita docs: size mặc định 2048x2048, hỗ trợ 2K/4K hoặc WIDTHxHEIGHT tuỳ chỉnh.
   maxResolution: '4K',
-  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  ratios: FULL_IMAGE_RATIOS,
   resolutionMode: 'tiers',
 }
 
@@ -270,6 +273,11 @@ export const IMAGE_SIZE_PRESETS: { id: string; label: string; width: number; hei
   { id: 'landscape', label: '16:9', width: 1344, height: 768, ratio: '16:9' },
   { id: '34', label: '3:4', width: 896, height: 1152, ratio: '3:4' },
   { id: '43', label: '4:3', width: 1152, height: 896, ratio: '4:3' },
+  { id: '23', label: '2:3', width: 832, height: 1248, ratio: '2:3' },
+  { id: '32', label: '3:2', width: 1248, height: 832, ratio: '3:2' },
+  { id: '45', label: '4:5', width: 896, height: 1120, ratio: '4:5' },
+  { id: '54', label: '5:4', width: 1120, height: 896, ratio: '5:4' },
+  { id: '219', label: '21:9', width: 1568, height: 672, ratio: '21:9' },
 ]
 
 /** Độ phân giải xuất sản phẩm */

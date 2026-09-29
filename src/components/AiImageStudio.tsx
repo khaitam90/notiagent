@@ -39,7 +39,6 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
   const [prompt, setPrompt] = useState('')
   const [loading, setLoading] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [ratioMenuOpen, setRatioMenuOpen] = useState(false)
   const [lastUrls, setLastUrls] = useState<string[]>([])
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [variants, setVariants] = useState<ImageVariantCount>(1)
@@ -74,6 +73,8 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
   const tierMeta = renderTier === 'director'
     ? 'Đạo diễn · model cao cấp'
     : 'Tiêu chuẩn · model trung bình'
+  // Chi hien tỉ lệ model nay nhan (Imagen chi co 5 ti le), van giu ti le dang chon de khong mat lua chon.
+  const availablePresets = IMAGE_SIZE_PRESETS.filter((p) => model.ratios.includes(p.ratio) || p.id === sizeId)
   const sizePreset = IMAGE_SIZE_PRESETS.find((p) => p.id === sizeId)
     ?? IMAGE_SIZE_PRESETS.find((p) => p.ratio === ratio)
     ?? IMAGE_SIZE_PRESETS[0]
@@ -153,11 +154,15 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
   }, [ratio, initialPresetId])
 
   useEffect(() => {
+    const current = IMAGE_SIZE_PRESETS.find((p) => p.id === sizeId)
+    if (current && !model.ratios.includes(current.ratio)) setSizeId('sq')
+  }, [model, sizeId])
+
+  useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!rootRef.current) return
       if (!rootRef.current.contains(e.target as Node)) {
         setSettingsOpen(false)
-        setRatioMenuOpen(false)
       }
     }
     document.addEventListener('mousedown', onDoc)
@@ -433,7 +438,7 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
 	          <div className="vs-image-ratio-bar">
             <span className="vs-image-ratio-label">Khung hình</span>
             <div className="vs-ratio-row vs-image-ratio-row">
-              {IMAGE_SIZE_PRESETS.map((p) => (
+              {availablePresets.map((p) => (
                 <button
                   key={p.id}
                   type="button"
@@ -504,67 +509,12 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
             <button
               type="button"
               className={`vs-bar-pill${settingsOpen ? ' open' : ''}`}
-              onClick={() => { setSettingsOpen((o) => !o); setRatioMenuOpen(false) }}
+              onClick={() => setSettingsOpen((o) => !o)}
             >
               <SlidersHorizontal size={13} />
               <span>{model.label}</span>
               <ChevronDown size={12} className={settingsOpen ? 'vs-chevron-up' : ''} />
             </button>
-            <div className="vs-param-wrap">
-              <button
-                type="button"
-                className={`vs-param-chip${ratioMenuOpen ? ' open' : ''}`}
-                onClick={() => { setRatioMenuOpen((o) => !o); setSettingsOpen(false) }}
-              >
-                {sizePreset.ratio}
-                <ChevronDown size={12} />
-              </button>
-              {ratioMenuOpen && (
-                <div className="vs-param-popover vs-image-ratio-popover" role="listbox">
-                  {IMAGE_SIZE_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={`vs-param-opt${sizeId === p.id ? ' active' : ''}`}
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => { setSizeId(p.id); setRatioMenuOpen(false) }}
-                    >
-                      <span>{p.label}</span>
-                      <small>{computeImageDimensions(p.ratio, resolution, modelId).width}×{computeImageDimensions(p.ratio, resolution, modelId).height}px</small>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="vs-param-wrap">
-              <div className="vs-image-res-inline" role="group" aria-label="Độ phân giải">
-                {IMAGE_RESOLUTION_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    className={`vs-param-chip vs-res-chip${resolution === opt.id ? ' active' : ''}`}
-                    onClick={() => setResolution(opt.id)}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="vs-param-wrap">
-              <div className="vs-image-variant-inline" role="group" aria-label="Biến thể">
-                {IMAGE_VARIANT_COUNTS.map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    className={`vs-param-chip vs-variant-chip${variants === n ? ' active' : ''}`}
-                    title={`${n} biến thể`}
-                    onClick={() => setVariants(n)}
-                  >
-                    ×{n}
-                  </button>
-                ))}
-              </div>
-            </div>
             <div className="vs-transport-spacer" style={{ flex: 1 }} />
             <button type="button" className="vs-bar-send" disabled={loading || uploading || !prompt.trim()} onClick={generate}>
               {loading ? <Loader2 size={16} className="spin" /> : <Send size={16} />}

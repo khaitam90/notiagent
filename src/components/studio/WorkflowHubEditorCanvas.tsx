@@ -6,6 +6,7 @@ import { downloadStudioMedia, studioDownloadFilename, uploadMedia } from '../../
 import { WorkflowHubCanvasToolbar } from './WorkflowHubCanvasToolbar'
 import { WorkflowHubTextModal } from './WorkflowHubTextModal'
 import { WorkflowHubNodeMediaPanel } from './WorkflowHubNodeMediaPanel'
+import { WorkflowHubNodeAudioPanel } from './WorkflowHubNodeAudioPanel'
 import { WorkflowHubAssetPickerPopover } from './WorkflowHubAssetPickerPopover'
 import {
   fileAcceptForField,
@@ -1210,6 +1211,14 @@ export function WorkflowHubEditorCanvas({
                     onUpdateConfig={(patch) => updateMediaNodeConfig(nodeItem, patch)}
                     latestOutputUrl={latestOutputByNodeId.get(nodeItem.id)?.url}
                     latestOutputType={latestOutputByNodeId.get(nodeItem.id)?.type}
+                  />
+                )}
+
+                {(nodeItem.type === 'tts' || nodeItem.type === 'lipsync') && (
+                  <WorkflowHubNodeAudioPanel
+                    node={nodeItem}
+                    isEditable={isEditable}
+                    onUpdateConfig={(patch) => updateMediaNodeConfig(nodeItem, patch)}
                   />
                 )}
 
