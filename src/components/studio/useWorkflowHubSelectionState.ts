@@ -116,13 +116,11 @@ export function useWorkflowHubSelectionState({
   )
 
   useEffect(() => {
-    if (sortedVisibleWorkflows.length === 0) {
-      setLibraryPreviewWorkflowId(null)
-      return
-    }
+    // Chi giu xem truoc khi workflow do con trong danh sach; khong tu mo workflow dau tien
+    // (panel "Xem truoc" tu mo che het danh sach + nut X khong dong duoc).
     setLibraryPreviewWorkflowId((current) => {
       if (current && sortedVisibleWorkflows.some((workflow) => workflow.id === current)) return current
-      return sortedVisibleWorkflows[0].id
+      return null
     })
   }, [setLibraryPreviewWorkflowId, sortedVisibleWorkflows])
 

@@ -106,6 +106,13 @@ def init_db() -> None:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS workflow_versions (
+                id TEXT PRIMARY KEY,
+                workflow_id TEXT NOT NULL,
+                note TEXT NOT NULL,
+                snapshot TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
             """
         )
 
@@ -343,6 +350,79 @@ def create_workflow(body: WorkflowCreate) -> dict[str, Any]:
     return workflow_from_row(row)
 
 
+MAX_WORKFLOW_VERSIONS = 30
+
+
+def save_workflow_version(connection: sqlite3.Connection, workflow: dict[str, Any], note: str) -> None:
+    # Giu ban truoc khi ghi de de khoi phuc duoc; chi giu MAX_WORKFLOW_VERSIONS ban moi nhat.
+    connection.execute(
+        "INSERT INTO workflow_versions(id, workflow_id, note, snapshot, created_at) VALUES (?, ?, ?, ?, ?)",
+        (secrets.token_hex(8), workflow["id"], note, json.dumps(workflow), now_iso()),
+    )
+    connection.execute(
+        "DELETE FROM workflow_versions WHERE workflow_id = ? AND id NOT IN "
+        "(SELECT id FROM workflow_versions WHERE workflow_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)",
+        (workflow["id"], workflow["id"], MAX_WORKFLOW_VERSIONS),
+    )
+
+
+def workflow_version_from_row(row: sqlite3.Row) -> dict[str, Any]:
+    snapshot = json.loads(row["snapshot"])
+    return {
+        "id": row["id"],
+        "workflowId": row["workflow_id"],
+        "workflowName": snapshot.get("name", ""),
+        "component": bool(snapshot.get("component", False)),
+        "componentName": snapshot.get("componentName", ""),
+        "createdAt": row["created_at"],
+        "note": row["note"],
+        "snapshot": snapshot,
+    }
+
+
+@app.get("/api/workflows/{workflow_id}/versions")
+def list_workflow_versions(workflow_id: str) -> dict[str, Any]:
+    with db() as connection:
+        rows = connection.execute(
+            "SELECT * FROM workflow_versions WHERE workflow_id = ? ORDER BY created_at DESC, rowid DESC",
+            (workflow_id,),
+        ).fetchall()
+    return {"versions": [workflow_version_from_row(row) for row in rows]}
+
+
+class WorkflowVersionRestore(BaseModel):
+    versionId: str = Field(min_length=1, max_length=80)
+
+
+@app.post("/api/workflows/{workflow_id}/versions/restore")
+def restore_workflow_version(workflow_id: str, body: WorkflowVersionRestore) -> dict[str, Any]:
+    with db() as connection:
+        row = connection.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
+        version = connection.execute(
+            "SELECT * FROM workflow_versions WHERE id = ? AND workflow_id = ?", (body.versionId, workflow_id)
+        ).fetchone()
+        if row is None or version is None:
+            raise HTTPException(status_code=404, detail="Không tìm thấy phiên bản workflow")
+        current = workflow_from_row(row)
+        save_workflow_version(connection, current, "Trước khi khôi phục phiên bản cũ")
+        snapshot = json.loads(version["snapshot"])
+        payload = {
+            key: snapshot.get(key, current[key])
+            for key in (
+                "description", "tags", "nodes", "edges", "category", "media",
+                "published", "component", "componentName",
+                "componentInputSchemaJson", "componentOutputSchemaJson",
+                "metadataJson", "sourceTemplateId",
+            )
+        }
+        connection.execute(
+            "UPDATE workflows SET name = ?, payload = ?, updated_at = ? WHERE id = ?",
+            (snapshot.get("name", current["name"]), json.dumps(payload), now_iso(), workflow_id),
+        )
+        restored = connection.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
+    return workflow_from_row(restored)
+
+
 @app.patch("/api/workflows/{workflow_id}")
 def update_workflow(workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
     with db() as connection:
@@ -350,6 +430,7 @@ def update_workflow(workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
         if row is None:
             raise HTTPException(status_code=404, detail="Không tìm thấy workflow")
         current = workflow_from_row(row)
+        before = dict(current)
         allowed = {
             "name", "description", "folderId", "tags", "nodes", "edges",
             "media", "published", "component", "componentName",
@@ -357,6 +438,8 @@ def update_workflow(workflow_id: str, body: dict[str, Any]) -> dict[str, Any]:
             "metadataJson", "sourceTemplateId",
         }
         current.update({key: value for key, value in body.items() if key in allowed})
+        if any(current[key] != before[key] for key in ("name", "nodes", "edges")):
+            save_workflow_version(connection, before, "Tự động lưu trước khi sửa")
         timestamp = now_iso()
         payload = {
             key: current[key]
@@ -410,6 +493,7 @@ def clone_workflow(workflow_id: str, body: WorkflowCloneRequest) -> dict[str, An
 def delete_workflow(workflow_id: str) -> dict[str, bool]:
     with db() as connection:
         deleted = connection.execute("DELETE FROM workflows WHERE id = ?", (workflow_id,)).rowcount
+        connection.execute("DELETE FROM workflow_versions WHERE workflow_id = ?", (workflow_id,))
     if not deleted:
         raise HTTPException(status_code=404, detail="Không tìm thấy workflow")
     return {"ok": True}

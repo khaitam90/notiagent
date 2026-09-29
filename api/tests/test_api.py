@@ -156,6 +156,33 @@ class ApiSmokeTests(unittest.TestCase):
         missing = self.client.post("/api/workflows/khong-ton-tai/clone", json={"folderId": "personal"})
         self.assertEqual(missing.status_code, 404)
 
+    def test_workflow_versions_saved_on_edit_and_restorable(self):
+        workflow_id = self.client.post("/api/workflows", json={"name": "V1", "folderId": "personal"}).json()["id"]
+        self.assertEqual(self.client.get(f"/api/workflows/{workflow_id}/versions").json()["versions"], [])
+
+        self.client.patch(f"/api/workflows/{workflow_id}", json={"nodes": [{"id": "a", "type": "prompt"}], "edges": []})
+        self.client.patch(f"/api/workflows/{workflow_id}", json={"nodes": [{"id": "a", "type": "prompt"}, {"id": "b", "type": "video"}]})
+        # Sua metadata khong doi nodes/edges/name thi KHONG tao ban moi.
+        self.client.patch(f"/api/workflows/{workflow_id}", json={"description": "chi doi mo ta"})
+
+        versions = self.client.get(f"/api/workflows/{workflow_id}/versions").json()["versions"]
+        self.assertEqual(len(versions), 2)
+        oldest = versions[-1]
+        self.assertEqual(oldest["snapshot"]["nodes"], [])
+
+        restored = self.client.post(
+            f"/api/workflows/{workflow_id}/versions/restore", json={"versionId": versions[0]["id"]}
+        )
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(len(restored.json()["nodes"]), 1)
+        self.assertEqual(len(self.client.get(f"/api/workflows/{workflow_id}/versions").json()["versions"]), 3)
+
+        self.assertEqual(
+            self.client.post(f"/api/workflows/{workflow_id}/versions/restore", json={"versionId": "nope"}).status_code, 404
+        )
+        self.client.delete(f"/api/workflows/{workflow_id}")
+        self.assertEqual(self.client.get(f"/api/workflows/{workflow_id}/versions").json()["versions"], [])
+
     def test_recover_interrupted_runs_marks_stuck_as_failed(self):
         from app.main import db, recover_interrupted_runs
 

@@ -212,11 +212,10 @@ export function useWorkflowHubLibraryData({
       .map(([tag]) => tag)
   }, [workflows])
 
+  // Khong tu mo workflow dau tien: truoc day `?? sortedVisibleWorkflows[0]` khien panel "Xem truoc"
+  // luon mo che het danh sach va nut X (dat id = null) khong dong duoc vi tu mo lai.
   const selectedLibraryWorkflow = useMemo(
-    () =>
-      sortedVisibleWorkflows.find((workflow) => workflow.id === libraryPreviewWorkflowId) ??
-      sortedVisibleWorkflows[0] ??
-      null,
+    () => sortedVisibleWorkflows.find((workflow) => workflow.id === libraryPreviewWorkflowId) ?? null,
     [libraryPreviewWorkflowId, sortedVisibleWorkflows],
   )
 
