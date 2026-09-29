@@ -30,6 +30,7 @@ ATLAS_VIDEO_URL = "https://api.atlascloud.ai/api/v1/model/generateVideo"
 ATLAS_PREDICTION_URL = "https://api.atlascloud.ai/api/v1/model/prediction"
 ATLAS_MVP_MODEL = "bytedance/seedance-v1-pro-fast/text-to-video"
 TOGETHER_VIDEO_URL = "https://api.together.xyz/v2/videos"
+TOGETHER_NO_RATIO_MODELS = {"ByteDance/Seedance-2.5"}
 ATLAS_RATIOS = {"16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
 CRAZY_VIDEO_URL = "https://crazyrouter.com/v1/video/create"
 CRAZY_STATUS_URL = "https://crazyrouter.com/v1/video/query"
@@ -951,8 +952,7 @@ def reference_image_for_provider(image_url: str) -> str:
     path = UPLOAD_DIR / Path(image_url.removeprefix(prefix)).name
     if not path.is_file():
         raise HTTPException(status_code=400, detail="Không tìm thấy ảnh tham chiếu đã tải lên")
-    mime = "image/jpeg" if path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
-    return f"data:{mime};base64,{base64.b64encode(path.read_bytes()).decode()}"
+    return base64.b64encode(path.read_bytes()).decode()
 
 
 def together_video_payload(body: VideoCreate) -> dict[str, Any]:
@@ -963,14 +963,20 @@ def together_video_payload(body: VideoCreate) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=f"Model Together.ai không hợp lệ: '{body.model}'")
     if body.video_url:
         raise HTTPException(status_code=400, detail="Together.ai chưa hỗ trợ video tham chiếu ở backend này")
+    # Tham so theo tai lieu Together (docs.together.ai/docs/seedance2.5-quickstart, 2026-09-30):
+    # Seedance tu sinh am thanh mac dinh, KHONG nhan `generate_audio` (loi "Unsupported use of
+    # 'generate_audio'" da gap that); Seedance 2.0 tat tieng bang settings.audio=false; Seedance 2.5
+    # khong nhan `ratio`. reference_images: URL hoac base64 thuan.
     payload: dict[str, Any] = {
         "model": body.model,
         "prompt": body.prompt.strip(),
         "seconds": str(body.duration),
-        "ratio": body.aspect_ratio,
         "resolution": body.quality,
-        "generate_audio": body.generate_audio,
     }
+    if body.model not in TOGETHER_NO_RATIO_MODELS:
+        payload["ratio"] = body.aspect_ratio
+    if body.model == "ByteDance/Seedance-2.0" and not body.generate_audio:
+        payload["settings"] = {"audio": False}
     if body.image_url:
         payload["media"] = {"reference_images": [reference_image_for_provider(body.image_url)]}
     return payload

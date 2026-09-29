@@ -213,6 +213,7 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertTrue(saved[0].endswith(".jpg") and saved[0].startswith("/api-proxy/api/media/"))
 
     def test_together_video_payload_and_status(self):
+        import base64
         from unittest import mock
 
         import app.main as main
@@ -226,8 +227,14 @@ class ApiSmokeTests(unittest.TestCase):
         ))
         self.assertEqual(payload["seconds"], "10")
         self.assertEqual(payload["prompt"], "dj")
-        self.assertTrue(payload["generate_audio"])
-        self.assertTrue(payload["media"]["reference_images"][0].startswith("data:image/jpeg;base64,"))
+        self.assertNotIn("generate_audio", payload)
+        self.assertNotIn("settings", payload)  # co am thanh = mac dinh cua Seedance
+        self.assertEqual(payload["ratio"], "16:9")
+        self.assertEqual(base64.b64decode(payload["media"]["reference_images"][0])[:3], bytes([0xFF, 0xD8, 0xFF]))
+        silent = together_video_payload(VideoCreate(prompt="x", provider="together", model="ByteDance/Seedance-2.0"))
+        self.assertEqual(silent["settings"], {"audio": False})
+        v25 = together_video_payload(VideoCreate(prompt="x", provider="together", model="ByteDance/Seedance-2.5"))
+        self.assertNotIn("ratio", v25)
         with self.assertRaises(main.HTTPException):
             together_video_payload(VideoCreate(prompt="x", provider="together", model="khong-co-slash"))
         with self.assertRaises(main.HTTPException):
