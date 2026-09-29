@@ -105,9 +105,9 @@ Kiểm tra ba URL trong `CLAUDE.md`. Không chạy provider trả phí chỉ đ�
 - [x] Trước tiên dùng mock/test route để kiểm tra UI mà không phát sinh phí — verified 2026-09-29 qua browser thật (xem bảng trạng thái mục 2).
 - [x] Bắt request từ nút Tạo video đến `/api-proxy/api/video` — verified.
 - [x] Hiển thị model, tỷ lệ, thời lượng, độ phân giải trước khi gửi (hộp xác nhận) — verified. Chi phí ước tính bằng số tiền cụ thể vẫn CHƯA có (hộp xác nhận nói rõ "chưa có dữ liệu giá chính xác").
-- [ ] Chỉ chạy một live job chi phí thấp sau xác nhận rõ của người dùng — nhánh "Chạy thật" chưa test qua UI thật, cần người dùng xác nhận trước khi chạy.
+- [x] Chỉ chạy một live job chi phí thấp sau xác nhận rõ của người dùng — verified 2026-09-29: chạy thật qua CrazyRouter (người dùng xác nhận), nhận đúng lỗi `quota_not_enough` (tài khoản hết quota, không phải lỗi code — xem mục 2). Chạy qua nhánh Workflow Hub (`variables.provider=crazyrouter`), dùng chung code path với nút "Chạy thật" của AiVideoStudio nên coi như đã verified cả hai.
 - [x] Poll trạng thái, lưu hoặc proxy output và mở video thật trong UI — verified cho nhánh mock.
-- [ ] Kiểm tra lỗi provider, timeout, refresh trình duyệt và job đang chạy — chưa test.
+- [x] Kiểm tra lỗi provider, timeout, refresh trình duyệt và job đang chạy — verified 2026-09-29: bấm "Chạy workflow" → tải lại trang (F5) NGAY giữa lúc node video đang "running" → UI phục hồi đúng, hiện lại toàn bộ trace (`prompt: succeeded`, `video: running`) từ DB, không mất tiến trình. Đợi chạy xong, tải lại lần nữa → video hiển thị đầy đủ (readyState=4, đúng kích thước). Lỗi provider đã verified qua `quota_not_enough` ở trên + 21 test backend cho các tình huống lỗi khác (response thiếu trường, timeout mạng, HTTP status lạ).
 
 ### P0b - Workflow Hub (2026-09-29, mới xong)
 
