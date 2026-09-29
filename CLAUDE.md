@@ -1,5 +1,11 @@
 # NotiAgent - hướng dẫn cho Claude Code
 
+## Cách làm việc với chủ dự án
+
+- Người dùng không rành kỹ thuật/lập trình. Không hỏi ý kiến về lựa chọn kỹ thuật (kiến trúc, thư viện, cách implement...) — tự quyết định phương án hợp lý nhất rồi làm luôn.
+- Chỉ hỏi lại khi việc đó THẬT SỰ cần người dùng quyết định: tốn tiền thật (gọi provider trả phí), hành động phá huỷ/khó hoàn tác, hoặc chưa rõ người dùng MUỐN kết quả gì (không phải hỏi cách làm ra sao). Hỏi bằng câu chuyện hậu quả thực tế, không dùng thuật ngữ kỹ thuật.
+- Báo cáo trong chat: ngắn gọn, tập trung KẾT QUẢ (đã sửa được gì, còn thiếu gì, người dùng cần làm gì tiếp — nếu có), không kể lể quá trình đã đọc/đã thử gì. Phần chi tiết kỹ thuật đầy đủ (đã làm, file thay đổi, lệnh kiểm tra...) vẫn ghi vào `HANDOFF-CLAUDE-CODE.md` như "Báo cáo bắt buộc" bên dưới — đó là tài liệu cho các phiên Claude Code sau đọc, không phải để dán nguyên vào chat.
+
 ## Đọc trước khi sửa
 
 1. Đọc `README.md` và `HANDOFF-CLAUDE-CODE.md`.
