@@ -97,6 +97,45 @@ export const MODEL_GROUPS: { brand: VideoModel['brand']; models: VideoModel[] }[
         ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
         defaultQuality: '1080p',
       },
+      // 2026-09-29: them theo yeu cau Sep - da xac minh THAT qua web search (khong bia): ra mat
+      // 31/7/2026, clip 1 lan toi 30s, toi 50 anh tham chieu, am thanh sinh cung hinh (khong ghep
+      // sau). Endpoint Atlas Cloud xac nhan that (atlascloud.ai/models/bytedance/seedance-2.5/...).
+      // Do phan giai THAT chi toi 720p (ByteDance cong bo 4K nhung ban phat hanh chua co).
+      {
+        id: 'seedance-2.5-atlascloud',
+        provider: 'atlascloud',
+        apiModel: 'bytedance/seedance-2.5/text-to-video',
+        imageApiModel: 'bytedance/seedance-2.5/image-to-video',
+        label: 'Seedance 2.5',
+        brand: 'Seedance',
+        tier: 'pro',
+        studioTier: 'director',
+        desc: 'Atlas Cloud · bản mới nhất (31/7/2026), clip 1 lần tới 30s, tới 50 ảnh tham chiếu, âm thanh sinh cùng hình.',
+        maxDuration: 30,
+        durations: [4, 8, 12, 16, 20, 24, 30],
+        ratios: ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'],
+        defaultQuality: '720p',
+        qualityOptions: ['480p', '720p'],
+        nativeAudio: 'always',
+      },
+      // DreamActor M2.0: KHONG phai text-to-video thuong - can 1 anh nhan vat + 1 video dan
+      // chuyen dong lam driving reference (dieu ban trong to app hien tai chua co UI rieng cho
+      // luong 2-input nay). Chua xac dinh duoc slug tren Novita/Atlas Cloud, chi thay tren
+      // Replicate qua web search - dat provider=replicate, se bao "chua ho tro" neu bam vao
+      // (dung nhu cac model catalog khac chua noi backend).
+      {
+        id: 'dreamactor-m2-replicate',
+        provider: 'replicate',
+        apiModel: 'bytedance/dreamactor-m2.0',
+        label: 'DreamActor M2.0',
+        brand: 'Seedance',
+        tier: 'pro',
+        studioTier: 'director',
+        desc: 'ByteDance · ghép chuyển động từ 1 video mẫu vào nhân vật trong ảnh (không phải text-to-video thường — cần ảnh nhân vật + video chuyển động mẫu, $0.05/giây).',
+        maxDuration: 15,
+        ratios: ['16:9', '9:16', '1:1'],
+        defaultQuality: '1080p',
+      },
     ],
   },
   {
@@ -211,6 +250,23 @@ export const MODEL_GROUPS: { brand: VideoModel['brand']; models: VideoModel[] }[
         qualityOptions: ['1080p'],
         nativeAudio: 'optional',
       },
+      // 2026-09-29: Kling 3.0 Motion Control - KHONG phai text-to-video thuong, can 1 anh nhan
+      // vat + 1 video mau 3-30s de "truyen" chuyen dong sang. Slug Replicate xac nhan that qua
+      // web search (replicate.com/kwaivgi/kling-v3-motion-control), gia $0.1134/giay (720p).
+      {
+        id: 'kling-3.0-motion-control-replicate',
+        provider: 'replicate',
+        apiModel: 'kwaivgi/kling-v3-motion-control',
+        label: 'Kling 3.0 Motion Control',
+        brand: 'Kling',
+        tier: 'pro',
+        studioTier: 'director',
+        desc: 'Kuaishou · truyền chuyển động từ 1 video mẫu (3-30s) sang nhân vật trong ảnh — không phải text-to-video thường, cần cả ảnh + video mẫu.',
+        maxDuration: 30,
+        ratios: ['16:9', '9:16'],
+        defaultQuality: '720p',
+        qualityOptions: ['720p', '1080p'],
+      },
     ],
   },
   // 2026-07-27w: Sep yeu cau noi Google Veo (day du dong), WAN 2.5, Sora 2, Hailuo/MiniMax.
@@ -267,6 +323,24 @@ export const MODEL_GROUPS: { brand: VideoModel['brand']; models: VideoModel[] }[
         qualityOptions: ['720p', '1080p'],
         nativeAudio: 'optional',
       },
+      // 2026-09-29: Gemini Omni Flash - model video nhanh cua Google, chay tren Interactions
+      // API (khac han Veo), co chinh sua hoi thoai (mo ta thay doi bang loi). Slug Replicate xac
+      // nhan that qua web search (replicate.com/google/gemini-omni-1.1). Video ngan (3-10s toi uu).
+      {
+        id: 'gemini-omni-flash-replicate',
+        provider: 'replicate',
+        apiModel: 'google/gemini-omni-1.1',
+        label: 'Gemini Omni Flash',
+        brand: 'Google',
+        tier: 'standard',
+        studioTier: 'standard',
+        desc: 'Google · sinh + chỉnh sửa video hội thoại (mô tả thay đổi bằng lời), âm thanh đồng bộ tự nhiên, tối ưu clip ngắn 3-10s.',
+        maxDuration: 8,
+        durations: [4, 6, 8],
+        ratios: ['16:9', '9:16'],
+        defaultQuality: '720p',
+        nativeAudio: 'always',
+      },
     ],
   },
   // 2026-08-04: xAI (Grok Imagine Video) và OpenAI (Sora 2) đã gỡ khỏi danh mục — cả 2 chỉ có
@@ -312,6 +386,27 @@ export const MODEL_GROUPS: { brand: VideoModel['brand']; models: VideoModel[] }[
         durations: [6, 10],
         ratios: ['16:9', '9:16', '1:1'],
         defaultQuality: '1080p',
+      },
+      // 2026-09-29: MiniMax H3 (ten chinh thuc, con goi Hailuo 3/H3) - da xac minh THAT qua web
+      // search: ra mat 31/7/2026, 2K native + am thanh stereo, toi 15s, toi 9 anh + 3 video + 3
+      // audio tham chieu 1 lan. CHUA tim thay tren Replicate/Novita (chi co API rieng cua MiniMax,
+      // minimax.io) - de provider=novita nhu fallback catalog nhung GHI RO trong desc la chua xac
+      // minh duoc endpoint, khac voi cac model khac da co slug provider xac nhan that.
+      {
+        id: 'minimax-h3',
+        provider: 'novita',
+        apiModel: 'minimax-h3-t2v',
+        label: 'MiniMax H3',
+        brand: 'MiniMax',
+        tier: 'pro',
+        studioTier: 'director',
+        desc: 'MiniMax · bản mới nhất (31/7/2026), 2K native + âm thanh stereo, tới 15s. ⚠️ Chưa xác minh được endpoint qua Novita/Replicate — chỉ có API riêng minimax.io, nút này mang tính danh mục, cần kiểm tra thêm trước khi dùng thật.',
+        maxDuration: 15,
+        durations: [6, 10, 15],
+        ratios: ['16:9', '9:16', '1:1'],
+        defaultQuality: '1080p',
+        qualityOptions: ['1080p'],
+        nativeAudio: 'always',
       },
     ],
   },

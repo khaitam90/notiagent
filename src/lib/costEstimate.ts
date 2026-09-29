@@ -25,6 +25,11 @@ const IMAGE_PRICE: Record<string, ImagePriceRule> = {
   'flux-2-pro': { kind: 'tiered_megapixel', firstMp: 0.03, additionalMp: 0.015 },
   'gpt-image-2': { kind: 'gpt_image_2' },
   'seedream-4.5': { kind: 'flat', usd: 0.04 },
+  // 2026-09-29: gia THAT xac minh qua docs Together.ai (id khop dung voi ImageModel.id trong
+  // imageModels.ts, KHONG phai id chung 'flux-2-pro' o tren - Together dung id rieng vi day la
+  // dung provider khac, thue that qua TOGETHER_API_KEY tren may nay).
+  'flux-2-pro-together': { kind: 'per_megapixel', usdPerMp: 0.03 },
+  'flux-2-dev-together': { kind: 'per_megapixel', usdPerMp: 0.0154 },
 }
 
 export function estimateImageCostUsd(
@@ -106,6 +111,23 @@ const VIDEO_PRICE: Record<string, VideoPriceRule> = {
   'seedance-2.0': { silent: 0.042 },
   'seedance-2.0-fast': { silent: 0.02 },
   'seedance-2.0-mini': { silent: 0.015 },
+  // 2026-09-29: gia THAT da xac minh qua web search khi them model (khong bia) - dreamactor tinh
+  // theo giay (BytePlus cong bo $0.05/s), kling motion control tinh theo giay 720p (EvoLink/BeatAPI
+  // cong bo $0.1134/s). Con seedance-2.5/gemini-omni-flash/minimax-h3 CHUA tim duoc gia cong khai
+  // luc them - co tinh khong dua vao day, de hasVideoPriceData() bao "chua co bang gia" trung thuc
+  // thay vi doan bang gia mac dinh chung.
+  'dreamactor-m2-replicate': { silent: 0.05 },
+  'kling-3.0-motion-control-replicate': { silent: 0.1134 },
+}
+
+/** True neu co gia THAT cho model nay (khong phai gia mac dinh doan chung $0.08/s). */
+export function hasVideoPriceData(modelId: string): boolean {
+  return modelId in VIDEO_PRICE
+}
+
+/** True neu co gia THAT cho model anh nay (khong tra ve 0 am tham). */
+export function hasImagePriceData(modelId: string): boolean {
+  return modelId in IMAGE_PRICE
 }
 
 export function estimateVideoCostUsd(

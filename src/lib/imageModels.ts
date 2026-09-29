@@ -1,4 +1,4 @@
-export type ImageProvider = 'novita' | 'replicate' | 'openrouter' | 'together'
+export type ImageProvider = 'novita' | 'replicate' | 'openrouter' | 'together' | 'atlascloud' | 'openai'
 export type ImageModelId = string
 export type ImageQualityTier = 'cuc_cao' | 'cao' | 'chuan' | 'toc_do'
 
@@ -106,6 +106,100 @@ const FLUX_2_PRO: ImageModel = {
   resolutionMode: 'tiers',
 }
 
+// 2026-09-29: 5 model duoi day them theo yeu cau Sep, da xac minh THAT qua web search (khong
+// bia) - ten model, hang san xuat, endpoint provider that su ton tai. CHUA noi backend that (chi
+// co openai/together duoc cai o create_image() trong main.py) - bam vao se bao loi ro rang
+// "provider chua duoc ho tro" thay vi gia vo chay duoc, dung nguyen tac da co san trong file nay
+// (xem SEEDREAM_50/IMAGEN_4_ULTRA - da la catalog-truoc-backend tu truoc).
+const GPT_IMAGE_2: ImageModel = {
+  id: 'gpt-image-2',
+  provider: 'openai',
+  apiModel: 'gpt-image-2',
+  label: 'GPT Image 2.0',
+  brand: 'OpenAI',
+  qualityTier: 'cuc_cao',
+  qualityLabel: 'Cực cao',
+  desc: 'OpenAI · model ảnh mới nhất (ra mắt 21/4/2026), chữ trong ảnh sắc nét, layout phức tạp.',
+  strengths: ['Chữ trong ảnh sắc nét', 'Layout phức tạp', 'Suy luận prompt'],
+  capabilities: ['Text-to-image', 'Chỉnh sửa ảnh'],
+  premium: true,
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '2K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
+const GPT_IMAGE_25: ImageModel = {
+  id: 'gpt-image-2.5',
+  provider: 'openai',
+  apiModel: 'gpt-image-2.5-flare',
+  label: 'GPT Image 2.5',
+  brand: 'OpenAI',
+  qualityTier: 'cuc_cao',
+  qualityLabel: 'Cực cao',
+  desc: 'OpenAI · bản nâng cấp (8/9/2026), nhanh hơn GPT Image 2.0 ~50%, có chế độ Sketch-to-image.',
+  strengths: ['Tốc độ nhanh hơn 2.0', 'Sketch-to-image', 'Chữ trong ảnh sắc nét'],
+  capabilities: ['Text-to-image', 'Chỉnh sửa ảnh'],
+  premium: true,
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '2K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
+const NANO_BANANA_PRO: ImageModel = {
+  id: 'nano-banana-pro',
+  provider: 'atlascloud',
+  apiModel: 'google/nano-banana-pro/text-to-image',
+  label: 'Nano Banana Pro',
+  brand: 'Google',
+  qualityTier: 'cuc_cao',
+  qualityLabel: 'Cực cao',
+  desc: 'Google (Gemini 3 Pro Image) · kiến thức thế giới sâu, giữ thương hiệu/địa phương hoá chính xác — bản cao cấp nhất dòng Nano Banana.',
+  strengths: ['Kiến thức thế giới', 'Giữ nhất quán thương hiệu', 'Kiểm soát sáng tạo chi tiết'],
+  capabilities: ['Text-to-image', 'Chỉnh sửa ảnh', 'Tới 4K'],
+  premium: true,
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '4K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
+const NANO_BANANA_2_LITE: ImageModel = {
+  id: 'nano-banana-2-lite',
+  provider: 'atlascloud',
+  apiModel: 'google/nano-banana-2-lite/text-to-image',
+  label: 'Nano Banana 2 Lite',
+  brand: 'Google',
+  qualityTier: 'chuan',
+  qualityLabel: 'Chuẩn',
+  desc: 'Google (Gemini 3.1 Flash Image) · bản rẻ/nhanh nhất dòng Nano Banana 2, sinh ảnh 4-8 giây.',
+  strengths: ['Rẻ nhất dòng Nano Banana', 'Nhanh (4-8s)'],
+  capabilities: ['Text-to-image'],
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '2K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
+const SEEDREAM_5_PRO: ImageModel = {
+  id: 'seedream-5.0-pro',
+  provider: 'replicate',
+  apiModel: 'bytedance/seedream-5-pro',
+  label: 'Seedream 5.0 Pro',
+  brand: 'ByteDance',
+  qualityTier: 'cuc_cao',
+  qualityLabel: 'Cực cao',
+  desc: 'ByteDance · suy luận không gian/vật lý (đặt vật đúng trọng lượng, kim đồng hồ đúng vị trí), tối đa 10 ảnh tham chiếu.',
+  strengths: ['Suy luận không gian/vật lý', 'Đa ảnh ref (tối đa 10)', 'Tách lớp ảnh (layer)'],
+  capabilities: ['Text-to-image', 'Chỉnh sửa đa nguồn', 'Tới 2K'],
+  premium: true,
+  defaultSize: { width: 1024, height: 1024 },
+  maxResolution: '2K',
+  ratios: ['1:1', '3:4', '9:16', '4:3', '16:9'],
+  resolutionMode: 'tiers',
+}
+
 const IMAGEN_4_ULTRA: ImageModel = {
   id: 'imagen-4-ultra',
   provider: 'replicate',
@@ -146,9 +240,9 @@ const SEEDREAM_45: ImageModel = {
 
 /** Nhóm theo cấp chất lượng (cao → thấp). */
 export const IMAGE_MODEL_GROUPS: { tier: ImageQualityTier; label: string; models: ImageModel[] }[] = [
-  { tier: 'cuc_cao', label: IMAGE_QUALITY_LABELS.cuc_cao, models: [SEEDREAM_50, IMAGEN_4_ULTRA] },
+  { tier: 'cuc_cao', label: IMAGE_QUALITY_LABELS.cuc_cao, models: [SEEDREAM_50, SEEDREAM_5_PRO, IMAGEN_4_ULTRA, GPT_IMAGE_2, GPT_IMAGE_25, NANO_BANANA_PRO] },
   { tier: 'cao', label: IMAGE_QUALITY_LABELS.cao, models: [FLUX_2_PRO] },
-  { tier: 'chuan', label: IMAGE_QUALITY_LABELS.chuan, models: [SEEDREAM_45, FLUX_2_DEV] },
+  { tier: 'chuan', label: IMAGE_QUALITY_LABELS.chuan, models: [SEEDREAM_45, FLUX_2_DEV, NANO_BANANA_2_LITE] },
   { tier: 'toc_do', label: IMAGE_QUALITY_LABELS.toc_do, models: [] },
 ]
 
@@ -266,6 +360,8 @@ export const PROVIDER_LABEL: Record<ImageProvider, string> = {
   novita: 'Novita AI',
   replicate: 'Replicate',
   together: 'Together.ai',
+  atlascloud: 'Atlas Cloud',
+  openai: 'OpenAI',
 }
 
 export const BRAND_ICON: Record<ImageModel['brand'], string> = {

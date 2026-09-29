@@ -15,6 +15,7 @@ import StudioRenderTierToggle from './studio/StudioRenderTierToggle'
 import { IMAGE_TOOL_PRESETS, type ImageToolPreset } from '../lib/imageToolPresets'
 import StudioRefSlots from './studio/StudioRefSlots'
 import { getImagePresetRefConfig } from '../lib/studioRefTypes'
+import { imageCostBreakdown, hasImagePriceData, formatCreditsWithUsd } from '../lib/costEstimate'
 
 type Props = {
   ratio?: string
@@ -305,17 +306,29 @@ export default function AiImageStudio({ ratio = '9:16', initialPresetId, initial
           </div>
         )}
 
-        {pendingText && (
-          <div className="vs-confirm-bar">
-            <button type="button" className="vs-confirm-run" onClick={() => runGenerate(pendingText, false)}>
-              ✅ Tạo thật (tính phí — {model.label})
-            </button>
-            <button type="button" className="vs-confirm-mock" onClick={() => runGenerate(pendingText, true)}>
-              🧪 Test miễn phí trước
-            </button>
-            <button type="button" onClick={() => setPendingText(null)}>✖ Huỷ</button>
-          </div>
-        )}
+        {pendingText && (() => {
+          const cost = imageCostBreakdown(model.id, {
+            width: outputSize.width,
+            height: outputSize.height,
+            resolutionLabel: outputSize.resolutionLabel,
+            numImages: variants,
+            ratio: sizePreset.ratio,
+          })
+          const costLabel = hasImagePriceData(model.id)
+            ? `tính phí — ${formatCreditsWithUsd(cost.usd)}`
+            : `tính phí — ${model.label}, chưa có bảng giá xác thực`
+          return (
+            <div className="vs-confirm-bar">
+              <button type="button" className="vs-confirm-run" onClick={() => runGenerate(pendingText, false)}>
+                ✅ Tạo thật ({costLabel})
+              </button>
+              <button type="button" className="vs-confirm-mock" onClick={() => runGenerate(pendingText, true)}>
+                🧪 Test miễn phí trước
+              </button>
+              <button type="button" onClick={() => setPendingText(null)}>✖ Huỷ</button>
+            </div>
+          )
+        })()}
         {error && <div className="vs-image-error">{error}</div>}
 
         {settingsOpen && (

@@ -831,8 +831,13 @@ def atlas_headers() -> dict[str, str]:
 def atlas_video_payload(body: VideoCreate) -> dict[str, Any]:
     if body.provider != "atlascloud":
         raise HTTPException(status_code=400, detail="MVP cục bộ hiện chỉ hỗ trợ provider atlascloud")
-    if body.model != ATLAS_MVP_MODEL:
-        raise HTTPException(status_code=400, detail="MVP cục bộ hiện chỉ hỗ trợ Seedance v1 Pro Fast")
+    # Truoc day chi cung nhan dung 1 model MVP (Seedance v1 Pro Fast) - da noi long de catalog
+    # video moi (Seedance 2.5, Veo 3.1 Atlas Cloud...) dung duoc that khi nguoi dung them
+    # ATLASCLOUD_API_KEY, thay vi luon bao loi "chi ho tro Seedance v1 Pro Fast" cho moi model
+    # khac. Van chi nhan model dang dung dinh dang "<hang>/<model>/text-to-video" (khop convention
+    # Atlas Cloud that, xem videoModels.ts).
+    if not body.model or "/" not in body.model:
+        raise HTTPException(status_code=400, detail=f"Model Atlas Cloud không hợp lệ: '{body.model}'")
     if body.image_url or body.video_url:
         raise HTTPException(status_code=400, detail="Lần thử đầu chỉ hỗ trợ text-to-video")
     if body.aspect_ratio not in ATLAS_RATIOS:

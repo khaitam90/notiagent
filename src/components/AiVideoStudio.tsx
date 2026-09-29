@@ -21,6 +21,7 @@ import type { RefGalleryItem } from './studio/StudioRefSlots'
 import { getVideoToolRefConfig, type StudioVideoProvider } from '../lib/studioRefTypes'
 import { validateImageFileDimensions, validateVideoFileDimensions } from '../lib/mediaRefValidation'
 import { generateId } from '../lib/uuid'
+import { videoCostBreakdown, formatCreditsWithUsd, hasVideoPriceData } from '../lib/costEstimate'
 
 type ScriptFlowMode = 'direct' | 'script'
 type DirectorPhase = 'idea' | 'script'
@@ -521,11 +522,16 @@ Chỉ trả kịch bản tiếng Việt, không giải thích thêm.`
     scrollDown()
 
     setPendingRender({ prompt })
+    const cost = videoCostBreakdown(model.id, duration, quality, ratio)
+    const costLine = hasVideoPriceData(model.id)
+      ? `• Chi phí ước tính: **${formatCreditsWithUsd(cost.usd)}**\n`
+      : `• Chi phí: chưa có bảng giá xác thực cho model này — kiểm tra giá thật trên trang provider trước khi chạy thật.\n`
     setMessages((m) => [...m, {
       role: 'assistant',
       content: `⚠️ **Xác nhận trước khi chạy provider trả phí**\n\n`
-        + `• Model: ${model.label}\n• Tỷ lệ: ${ratio} · ${duration} giây · ${quality}\n\n`
-        + `Chưa có dữ liệu giá chính xác từ provider — đây là lệnh gọi API **trả phí thật**. `
+        + `• Model: ${model.label}\n• Tỷ lệ: ${ratio} · ${duration} giây · ${quality}\n`
+        + costLine
+        + `\nSố liệu trên là **ước tính** dựa theo bảng giá công khai — có thể lệch so với hoá đơn thật của provider. `
         + `Dùng "Test miễn phí" bên dưới để kiểm tra luồng UI (nút bấm → API → poll → hiển thị video) bằng dữ liệu mẫu trước, `
         + `hoặc "Chạy thật" để gửi job trả phí ngay.`,
       time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
