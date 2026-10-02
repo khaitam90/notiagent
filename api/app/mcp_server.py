@@ -21,7 +21,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from mcp.server.fastmcp import FastMCP, Image
+import base64
+
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ContentBlock, ImageContent, TextContent
 
 API_URL = os.getenv("NOTIAGENT_API_URL", "http://127.0.0.1:8780").rstrip("/")
 DATA_DIR = Path(os.getenv("NOTIAGENT_DATA_DIR", "/data"))
@@ -31,6 +34,14 @@ HOST_DATA_ROOT = os.getenv("NOTIAGENT_HOST_DATA_ROOT", "D:/NotiAgentData").rstri
 WEB_PORT = os.getenv("NOTIAGENT_WEB_PORT", "8080")
 MEDIA_URL_PREFIX = "/api-proxy/api/media/"
 USD_PER_CREDIT = 0.01
+
+
+def _text(value: str) -> TextContent:
+    return TextContent(type="text", text=value)
+
+
+def _jpeg(data: bytes) -> ImageContent:
+    return ImageContent(type="image", data=base64.b64encode(data).decode(), mimeType="image/jpeg")
 
 # Gia THAT (GET https://api.together.xyz/v1/models, pricing.video, 2026-09-30). USD / giay video.
 VIDEO_PRICES: dict[str, dict[str, float]] = {
@@ -306,7 +317,7 @@ def create_image(
     model: str = DEFAULT_IMAGE_MODEL,
     approved_cost_usd: float | None = None,
     test_mode: bool = False,
-) -> list[Any]:
+) -> list[ContentBlock]:
     """Tao anh (Character Sheet, khung dau...) bang FLUX.2 qua Together.ai. Tra phi: can approved_cost_usd (nguoi dung da dong y,
     xem estimate_cost). test_mode=true = anh mau mien phi. Tra ve anh de xem ngay trong chat + duong dan file."""
     width, height = image_dimensions(ratio, resolution)
@@ -314,7 +325,7 @@ def create_image(
     if not test_mode:
         blocked = check_approval(estimate, approved_cost_usd)
         if blocked:
-            return [blocked]
+            return [_text(blocked)]
     result = _api(
         "POST", "/api/image", timeout=180,
         json={"prompt": prompt, "provider": "mock" if test_mode else "together", "model": model,
@@ -322,11 +333,13 @@ def create_image(
     )
     urls = result.get("imageUrls") or [result.get("imageUrl")]
     paths = [_media_path(u) for u in urls if u]
-    output: list[Any] = [
-        f"Xong {len(paths)} anh ({'TEST mien phi' if test_mode else f'${estimate:.3f}'}). File: "
-        + "; ".join(f"{_host_path(p)} (ten: {p.name})" for p in paths)
+    output: list[ContentBlock] = [
+        _text(
+            f"Xong {len(paths)} anh ({'TEST mien phi' if test_mode else f'${estimate:.3f}'}). File: "
+            + "; ".join(f"{_host_path(p)} (ten: {p.name})" for p in paths)
+        )
     ]
-    output.extend(Image(data=_jpeg_bytes(p), format="jpeg") for p in paths)
+    output.extend(_jpeg(_jpeg_bytes(p)) for p in paths)
     return output
 
 
@@ -370,7 +383,7 @@ def create_video(
 
 
 @mcp.tool()
-def get_video(task_id: str, wait_seconds: int = 45) -> list[Any]:
+def get_video(task_id: str, wait_seconds: int = 45) -> list[ContentBlock]:
     """Kiem tra tien do video (cho toi da wait_seconds, mac dinh 45). Khi xong: tra duong dan file + thong tin (do dai,
     co am thanh, do to) + luoi khung hinh de QC. Chua xong thi goi lai."""
     deadline = time.time() + max(0, min(wait_seconds, 55))
@@ -381,16 +394,16 @@ def get_video(task_id: str, wait_seconds: int = 45) -> list[Any]:
             break
         time.sleep(5)
     if state == "fail":
-        return [f"Tao video THAT BAI: {status.get('failMsg') or 'khong ro ly do'}"]
+        return [_text(f"Tao video THAT BAI: {status.get('failMsg') or 'khong ro ly do'}")]
     if state != "success":
-        return [f"Dang xu ly (trang thai: {state}). Goi lai get_video('{task_id}') sau it phut."]
+        return [_text(f"Dang xu ly (trang thai: {state}). Goi lai get_video('{task_id}') sau it phut.")]
     result = json.loads(status.get("resultJson") or "{}")
     video_url = result.get("videoUrl") or (result.get("resultUrls") or [""])[0]
     path = _media_path(video_url)
     return _qc_report(path)
 
 
-def _qc_report(path: Path) -> list[Any]:
+def _qc_report(path: Path) -> list[ContentBlock]:
     info = probe_video(path)
     audio = "co am thanh" if info["has_audio"] else "KHONG co am thanh"
     if info.get("mean_volume_db") is not None:
@@ -401,11 +414,11 @@ def _qc_report(path: Path) -> list[Any]:
         "Duoi day la luoi 6 khung hinh deu nhau de QC. Chi nhan xet nhung gi THAY duoc trong cac khung; "
         "khong the nghe am thanh qua cong cu nay - chi bao thong so am thanh o tren."
     )
-    return [text, Image(data=contact_sheet(path), format="jpeg")]
+    return [_text(text), _jpeg(contact_sheet(path))]
 
 
 @mcp.tool()
-def qc_video(filename: str) -> list[Any]:
+def qc_video(filename: str) -> list[ContentBlock]:
     """Kiem tra chat luong mot video da co trong media (ten file): thong so + luoi 6 khung hinh."""
     return _qc_report(_media_path(filename))
 

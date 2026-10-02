@@ -32,7 +32,7 @@ class McpServerTests(unittest.TestCase):
             self.assertIn("CHUA TRA TIEN", text)
             self.assertIn("approved_cost_usd=1.6", text)
             blocked = m.create_image("canh dep")
-            self.assertIn("CHUA TRA TIEN", blocked[0])
+            self.assertIn("CHUA TRA TIEN", blocked[0].text)
 
     def test_test_mode_uses_mock_provider_for_video(self):
         sent = {}
