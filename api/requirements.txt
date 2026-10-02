@@ -2,3 +2,8 @@ fastapi==0.116.1
 httpx==0.28.1
 python-multipart==0.0.20
 uvicorn==0.35.0
+mcp==1.30.0
+Pillow
+starlette<0.48
+sse-starlette==3.0.3
+imageio-ffmpeg
