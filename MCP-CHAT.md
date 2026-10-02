@@ -1,4 +1,6 @@
-# Tạo ảnh/video ngay trong khung chat Claude (MCP)
+# Tạo ảnh/video ngay trong khung chat Claude
+
+> **Cách chính (khuyên dùng): khung chat Code.** Claude Code chạy lệnh `docker exec -i notiagent-local-api-1 python -m app.studio_cli ...` (xem mục "Quy trình tạo ảnh/video A–Z" trong `CLAUDE.md`), không cần cài gì vào Claude Desktop. Chat thường không gọi được agent/lệnh nên phần MCP bên dưới chỉ là lựa chọn phụ cho thẻ Chat/Cowork.
 
 NotiAgent có sẵn một MCP server (`api/app/mcp_server.py`) chạy **trong container API** nên máy không cần cài thêm gì ngoài Docker.
 Claude Desktop (Chat/Cowork) gọi nó qua `docker exec -i notiagent-local-api-1 python -m app.mcp_server`.

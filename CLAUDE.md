@@ -67,6 +67,20 @@ Sau khi chạy, xác minh:
 2. Thêm bước xác nhận chi phí; chỉ sau khi người dùng duyệt mới chạy một live test chi phí thấp.
 3. Xuất preset/workflow n8n không chứa credential và tạo Git remote private khi người dùng cho phép.
 
+## Quy trình tạo ảnh/video A–Z ngay trong chat Code
+
+Khi người dùng đưa ý tưởng làm video/ảnh AI, toàn bộ quá trình chạy trong khung chat Code này (không chuyển sang app khác). Công cụ: lệnh
+`docker exec -i notiagent-local-api-1 python -m app.studio_cli <status|estimate|inbox|import-ref|image|video|wait|qc|ledger>` (prompt dài đưa bằng `--prompt-stdin` + heredoc, nhớ `-i`).
+
+1. Gọi skill `dao-dien-ai-2`: chỉ xuất Phần A (bảng Storyboard); sửa theo góp ý; chỉ khi người dùng nói "Đã duyệt bảng" mới xuất Phần B (prompt tiếng Anh).
+2. Ảnh tham chiếu: người dùng thả vào `D:\NotiAgentData\inbox` (xem `inbox`) hoặc gửi link (`import-ref`). Cần Character Sheet/khung đầu thì `image` (FLUX.2, đọc ảnh bằng Read).
+3. Báo chi phí bằng `estimate` (credit + USD), hỏi người dùng có đồng ý không, CHỜ trả lời. Lệnh trả tiền (`image`, `video`) bắt buộc kèm `--approved <USD đã duyệt>`; thiếu thì CLI chỉ in ước tính và không gọi nhà cung cấp. Muốn thử miễn phí: `--test`.
+4. `video ... --approved <USD>` rồi `wait <task_id>` (chạy nền bằng run_in_background, mất vài phút).
+5. QC: dùng Read đọc lưới khung hình `qc-*.jpg` (đường dẫn do `wait`/`qc` in ra). Chỉ nhận xét điều NHÌN THẤY; âm thanh chỉ báo thông số (không nghe được). Có thể giao subagent QC/viết prompt song song cho nhiều clip.
+6. Giao: SendUserFile file mp4 + báo chi phí thực tế (`ledger` có tổng đã chi). Lỗi nặng thì sửa prompt, báo chi phí mới, chờ duyệt lại.
+7. Chỉ dùng model có giá xác thực trong `api/app/mcp_server.py` (Seedance 2.0/2.5, MiniMax H3 cho video; FLUX.2 cho ảnh). Mặc định Seedance 2.0 (4–15 giây).
+8. Khóa Together.ai phải còn hiệu lực (kiểm tra bằng `status`); khóa lỗi 401 thì báo người dùng đổi khóa trong `.env`.
+
 ## Báo cáo bắt buộc
 
 Mỗi phiên ghi rõ: đã làm, file thay đổi, lệnh kiểm tra, kết quả, phần chưa kiểm chứng, rủi ro và bước tiếp theo. Không tuyên bố hoàn thành nếu chỉ build pass mà chưa kiểm tra luồng phù hợp.
