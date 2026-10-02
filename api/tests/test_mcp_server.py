@@ -21,6 +21,9 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(m.image_dimensions("9:16", "1K")[1], 1024)
         self.assertAlmostEqual(m.estimate_image_usd("black-forest-labs/FLUX.2-dev", 1024, 1024), 0.0154 * 1.048576, places=4)
 
+    def test_image_estimate_ignores_video_default_resolution(self):
+        self.assertIn("0.016", m.estimate_cost("image", ratio="1:1"))
+
     def test_approval_guard_blocks_without_confirmation(self):
         self.assertIn("CHUA TRA TIEN", m.check_approval(1.6, None))
         self.assertIn("CHUA TRA TIEN", m.check_approval(1.6, 0.5))
@@ -49,3 +52,26 @@ class McpServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StudioCliTests(unittest.TestCase):
+    def test_cli_blocks_paid_calls_without_approval_and_logs_ledger(self):
+        import io
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+
+        from app import studio_cli as cli
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(m, "LEDGER", Path(tmp) / "ledger.jsonl"), \
+                mock.patch.object(m, "_api", side_effect=AssertionError("khong duoc goi API")):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                cli.main(["video", "--prompt", "dj", "--seconds", "10"])
+            self.assertIn("CHUA TRA TIEN", out.getvalue())
+            self.assertIn("--approved 1.6", out.getvalue())
+            self.assertEqual(m.ledger_total(), (0.0, 0))
+            m.log_spend("video", "x", 1.6, "t1")
+            m.log_spend("image", "y", 0.02, "t2")
+            self.assertEqual(m.ledger_total(), (1.62, 2))

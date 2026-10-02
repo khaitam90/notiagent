@@ -17,6 +17,7 @@ import secrets
 import shutil
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +126,24 @@ def check_approval(estimate_usd: float, approved_cost_usd: float | None) -> str 
             f"neu dong y, goi lai voi approved_cost_usd={estimate_usd}. Hoac dung test_mode=true de thu mien phi."
         )
     return None
+
+
+# ---------------------------------------------------------------- so sach chi phi
+LEDGER = DATA_DIR / "ledger.jsonl"
+
+
+def log_spend(kind: str, model: str, usd: float, ref: str) -> None:
+    LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    row = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "kind": kind, "model": model, "usd": usd, "ref": ref}
+    with LEDGER.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def ledger_total() -> tuple[float, int]:
+    if not LEDGER.is_file():
+        return 0.0, 0
+    rows = [json.loads(line) for line in LEDGER.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return round(sum(float(r["usd"]) for r in rows), 4), len(rows)
 
 
 # ---------------------------------------------------------------- tien ich
@@ -274,6 +293,8 @@ def estimate_cost(
         detail = f"{model}, {duration_seconds}s, {resolution}"
     elif kind == "image":
         model = model or DEFAULT_IMAGE_MODEL
+        if resolution.upper() not in LONG_EDGE:
+            resolution = "1K"  # mac dinh 720p la cua video; anh dung 1K/2K
         width, height = image_dimensions(ratio, resolution)
         usd = estimate_image_usd(model, width, height, num_images)
         detail = f"{model}, {width}x{height}, {num_images} anh"
@@ -333,6 +354,8 @@ def create_image(
     )
     urls = result.get("imageUrls") or [result.get("imageUrl")]
     paths = [_media_path(u) for u in urls if u]
+    if not test_mode:
+        log_spend("image", model, estimate, ",".join(p.name for p in paths))
     output: list[ContentBlock] = [
         _text(
             f"Xong {len(paths)} anh ({'TEST mien phi' if test_mode else f'${estimate:.3f}'}). File: "
@@ -376,6 +399,8 @@ def create_video(
         body["image_url"] = _resolve_reference(reference_image)
     created = _api("POST", "/api/video", json=body, timeout=180)
     task_id = created["taskId"]
+    if not test_mode:
+        log_spend("video", model, estimate, task_id)
     return (
         f"Da gui yeu cau tao video ({'TEST mien phi' if test_mode else f'${estimate:.3f}'}). task_id={task_id}. "
         "Video can vai phut: goi get_video(task_id) de kiem tra va nhan ket qua."
